@@ -1,43 +1,89 @@
 """
 Système intelligent de prédiction de défaillance des transformateurs de distribution
 --------------------------------------------------------------------------------------
-MAQUETTE STREAMLIT — à connecter à votre vrai modèle entraîné (chapitre 2).
+Tableau de bord de démonstration reliant explicitement les éléments du mémoire :
+- Architecture en couches (section 3.2)
+- Pipeline capteurs -> prétraitement -> modèle -> interprétation (section 3.4)
+- Simulation des conditions de fonctionnement (section 3.5)
+- Détection de dérive / risque progressif (section 3.6)
+- Comparaison des modèles (section 2.9)
+- Intégration SCADA / supervision du parc (section 3.9)
 
-La fonction `compute_risk()` ci-dessous utilise une formule pondérée simplifiée,
-construite uniquement pour permettre de tester et de présenter le pipeline
-(capteurs -> prétraitement -> modèle -> interprétation) avant que le modèle réel
-ne soit disponible. Pour brancher votre vrai modèle :
+La fonction `compute_risk()` utilise une formule pondérée simplifiée, construite pour
+tester et présenter le pipeline avant que le vrai modèle entraîné ne soit disponible.
+Pour brancher le modèle réel :
 
     import joblib
     model = joblib.load("mon_modele.pkl")
     proba = model.predict_proba(X)[:, 1] * 100   # remplace compute_risk()
 
 Lancer localement :
-    pip install streamlit pandas numpy pydeck
+    pip install -r requirements.txt
     streamlit run app.py
 """
 
-import time
 import numpy as np
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
+import plotly.graph_objects as go
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="Prédiction de défaillance des transformateurs — Burkina Faso",
+    page_icon="⚡",
     layout="wide",
 )
 
-# ----------------------------------------------------------------------------
-# Moteur de risque (à remplacer par le modèle entraîné du chapitre 2)
-# ----------------------------------------------------------------------------
+# ============================================================================
+# STYLE GLOBAL
+# ============================================================================
+st.markdown("""
+<style>
+    .block-container {padding-top: 1.6rem;}
+    .kpi-card {
+        background:#141C2A;border:1px solid #26314A;border-radius:10px;
+        padding:16px 18px;height:100%;
+    }
+    .kpi-label{font-size:0.78rem;color:#8B97AC;margin-bottom:6px;}
+    .kpi-value{font-size:1.6rem;font-weight:700;color:#E9ECF2;}
+    .kpi-sub{font-size:0.74rem;color:#8B97AC;margin-top:4px;}
+    .ref-badge{
+        display:inline-block;background:#1B2436;border:1px solid #26314A;
+        color:#E8A23D;font-family:monospace;font-size:0.72rem;
+        padding:2px 8px;border-radius:5px;margin-left:6px;
+    }
+    .section-note{
+        background:#141C2A;border-left:3px solid #E8A23D;border-radius:4px;
+        padding:10px 14px;font-size:0.85rem;color:#C4CCDA;margin:10px 0 18px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+def kpi(label, value, sub=""):
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-value">{value}</div>
+        <div class="kpi-sub">{sub}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def ref(text):
+    st.markdown(f'<span class="ref-badge">{text}</span>', unsafe_allow_html=True)
+
+
+# ============================================================================
+# MOTEUR DE RISQUE (à remplacer par le modèle entraîné du chapitre 2)
+# ============================================================================
 
 def _clamp01(x):
     return max(0.0, min(1.0, x))
 
 
 def compute_risk(charge, oil, ambient, humidity, voltage, season="seche"):
-    """Retourne (score_total, contributions_par_variable)."""
     charge_stress = (
         0 if charge <= 60
         else _clamp01((charge - 60) / 40) * 0.6 if charge <= 100
@@ -76,22 +122,21 @@ def compute_risk(charge, oil, ambient, humidity, voltage, season="seche"):
 
 def classify(score):
     if score < 30:
-        return "Normal", "🟢", "#49B586"
+        return "Normal", "#49B586"
     elif score < 65:
-        return "Surveillance renforcée", "🟠", "#E8A23D"
-    else:
-        return "Critique", "🔴", "#E0554F"
+        return "Surveillance renforcée", "#E8A23D"
+    return "Critique", "#E0554F"
 
 
-def explain(v, contribs, season):
+def explain(v_display, contribs, season):
     sorted_c = sorted(contribs.items(), key=lambda kv: kv[1], reverse=True)
     total = min(100.0, sum(contribs.values()))
     if total < 30:
         return "Les valeurs transmises restent dans les plages de fonctionnement normal ; aucun facteur ne présente de contribution significative au risque."
     top, second = sorted_c[0], sorted_c[1]
-    text = f"Le risque provient principalement de **{top[0].lower()}** ({v[top[0]]})"
+    text = f"Le risque provient principalement de **{top[0].lower()}** ({v_display[top[0]]})"
     if second[1] > 3:
-        text += f", combinée à **{second[0].lower()}** ({v[second[0]]})"
+        text += f", combinée à **{second[0].lower()}** ({v_display[second[0]]})"
     if season == "pluvieuse":
         text += ", dans un contexte de saison pluvieuse qui accentue l'effet de l'humidité sur l'isolation"
     return text + "."
@@ -101,32 +146,216 @@ PRESETS = {
     "Fonctionnement normal — saison sèche": dict(charge=55, oil=58, ambient=33, humidity=22, voltage=2, season="seche"),
     "Pic de chaleur": dict(charge=85, oil=88, ambient=43, humidity=18, voltage=3, season="seche"),
     "Saison pluvieuse": dict(charge=65, oil=62, ambient=27, humidity=87, voltage=-2, season="pluvieuse"),
+    "Surcharge critique": dict(charge=138, oil=108, ambient=40, humidity=30, voltage=-9, season="seche"),
 }
 
-st.title("Système intelligent de prédiction — transformateurs de distribution")
-st.caption(
-    "Maquette de démonstration du pipeline capteurs → prétraitement → modèle IA → interprétation. "
-    "Le moteur de risque utilisé ici est une formule pondérée simplifiée ; remplacez `compute_risk()` "
-    "par votre modèle réellement entraîné (chapitre 2) avant tout usage en soutenance comme résultat final."
-)
+# ============================================================================
+# COMPOSANTS VISUELS RICHES (HTML/SVG embarqué)
+# ============================================================================
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Simulation manuelle",
-    "Série temporelle",
+def pipeline_visual_html():
+    return """
+    <div style="font-family:'IBM Plex Sans',sans-serif;background:#0B1119;padding:6px 0;">
+    <style>
+      .pv-wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
+      .pv-diag{flex:0 0 220px;}
+      .pv-flow{flex:1;min-width:260px;display:flex;align-items:center;justify-content:space-between;position:relative;padding:0 6px;}
+      .pv-flow::before{content:"";position:absolute;top:15px;left:18px;right:18px;height:1px;background:#26314A;z-index:0;}
+      .pv-stage{display:flex;flex-direction:column;align-items:center;gap:6px;position:relative;z-index:1;}
+      .pv-dot{width:30px;height:30px;border-radius:50%;background:#E8A23D;border:2px solid #E8A23D;
+              display:flex;align-items:center;justify-content:center;font-size:14px;color:#0B1119;font-weight:700;
+              animation:pv-fade 1.6s ease-in-out infinite; }
+      .pv-stage:nth-child(1) .pv-dot{animation-delay:0s;}
+      .pv-stage:nth-child(2) .pv-dot{animation-delay:0.25s;}
+      .pv-stage:nth-child(3) .pv-dot{animation-delay:0.5s;}
+      .pv-stage:nth-child(4) .pv-dot{animation-delay:0.75s;}
+      @keyframes pv-fade{0%,100%{opacity:0.55;box-shadow:0 0 0 rgba(232,162,61,0);}50%{opacity:1;box-shadow:0 0 10px rgba(232,162,61,0.6);}}
+      .pv-stage span{font-size:11px;color:#8B97AC;text-align:center;max-width:74px;}
+      .sensor-dot{fill:#4FA3D1;animation:sd-pulse 2.4s ease-in-out infinite;}
+      @keyframes sd-pulse{0%,100%{opacity:0.6;}50%{opacity:1;}}
+      .sensor-label{font-family:monospace;font-size:8.5px;fill:#8B97AC;}
+    </style>
+    <div class="pv-wrap">
+      <div class="pv-diag">
+        <svg viewBox="0 0 320 150" width="100%">
+          <rect x="20" y="20" width="6" height="120" fill="#2A3550"/>
+          <rect x="60" y="55" width="90" height="60" rx="6" fill="#1B2436" stroke="#334063" stroke-width="1.5"/>
+          <line x1="60" y1="65" x2="50" y2="65" stroke="#334063" stroke-width="3"/>
+          <line x1="60" y1="80" x2="50" y2="80" stroke="#334063" stroke-width="3"/>
+          <line x1="60" y1="95" x2="50" y2="95" stroke="#334063" stroke-width="3"/>
+          <line x1="60" y1="105" x2="50" y2="105" stroke="#334063" stroke-width="3"/>
+          <rect x="80" y="35" width="8" height="22" fill="#3A4770"/>
+          <rect x="110" y="35" width="8" height="22" fill="#3A4770"/>
+          <rect x="175" y="30" width="26" height="16" rx="3" fill="#1B2436" stroke="#334063" stroke-width="1.2"/>
+          <line x1="188" y1="30" x2="188" y2="18" stroke="#334063" stroke-width="1.5"/>
+          <circle class="sensor-dot" cx="84" cy="32" r="3.6"/>
+          <circle class="sensor-dot" cx="114" cy="32" r="3.6"/>
+          <circle class="sensor-dot" cx="105" cy="85" r="3.6"/>
+          <circle class="sensor-dot" cx="188" cy="18" r="3.6"/>
+          <text x="66" y="15" class="sensor-label">Courant / tension</text>
+          <text x="95" y="130" class="sensor-label">T° huile</text>
+          <text x="148" y="55" class="sensor-label">T° amb. / humidité</text>
+        </svg>
+      </div>
+      <div class="pv-flow">
+        <div class="pv-stage"><div class="pv-dot">1</div><span>Capteurs</span></div>
+        <div class="pv-stage"><div class="pv-dot">2</div><span>Prétraitement</span></div>
+        <div class="pv-stage"><div class="pv-dot">3</div><span>Modèle IA</span></div>
+        <div class="pv-stage"><div class="pv-dot">4</div><span>Résultat</span></div>
+      </div>
+    </div>
+    </div>
+    """
+
+
+def architecture_visual_html():
+    layers = [
+        ("Couche d'acquisition", "Capteurs, compteurs intelligents, API climatiques"),
+        ("Couche de traitement des données", "Nettoyage, normalisation, mise en forme"),
+        ("Couche d'intelligence", "Modèle entraîné — calcul de l'indice de risque"),
+        ("Couche applicative", "Comparaison aux seuils, génération des alertes"),
+        ("Couche de présentation", "Tableau de bord, notifications, supervision"),
+    ]
+    rows = ""
+    for i, (title, desc) in enumerate(layers):
+        arrow = '<div style="text-align:center;color:#26314A;font-size:16px;margin:2px 0;">↓</div>' if i > 0 else ""
+        rows += f"""
+        {arrow}
+        <div style="background:#141C2A;border:1px solid #26314A;border-left:3px solid #E8A23D;
+                    border-radius:7px;padding:10px 16px;">
+            <div style="font-size:0.86rem;font-weight:600;color:#E9ECF2;">{title}</div>
+            <div style="font-size:0.76rem;color:#8B97AC;margin-top:2px;">{desc}</div>
+        </div>
+        """
+    return f"""
+    <div style="font-family:'IBM Plex Sans',sans-serif;max-width:520px;">{rows}</div>
+    """
+
+
+def plotly_gauge(score, color):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=score,
+        number={"suffix": " / 100", "font": {"size": 30, "color": "#E9ECF2"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#8B97AC", "tickfont": {"color": "#8B97AC"}},
+            "bar": {"color": color, "thickness": 0.28},
+            "bgcolor": "#141C2A",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 30], "color": "#173226"},
+                {"range": [30, 65], "color": "#3A2C14"},
+                {"range": [65, 100], "color": "#3A1D1B"},
+            ],
+        },
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=210, margin=dict(l=20, r=20, t=20, b=0),
+        font={"color": "#E9ECF2"},
+    )
+    return fig
+
+
+def plotly_factors(contribs, v_display):
+    items = sorted(contribs.items(), key=lambda kv: kv[1])
+    names = [k for k, _ in items]
+    values = [v for _, v in items]
+    colors = ["#49B586" if v < 10 else "#E8A23D" if v < 20 else "#E0554F" for v in values]
+    text = [v_display[n] for n in names]
+    fig = go.Figure(go.Bar(
+        x=values, y=names, orientation="h", marker_color=colors,
+        text=text, textposition="outside", textfont={"color": "#8B97AC", "size": 11},
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=230, margin=dict(l=10, r=40, t=10, b=10),
+        xaxis={"visible": False, "range": [0, 40]},
+        yaxis={"color": "#E9ECF2", "tickfont": {"size": 12}},
+        font={"color": "#E9ECF2"},
+    )
+    return fig
+
+
+# ============================================================================
+# NAVIGATION
+# ============================================================================
+
+st.sidebar.title("⚡ Système de prédiction")
+st.sidebar.caption("Transformateurs de distribution — Burkina Faso")
+page = st.sidebar.radio("Navigation", [
+    "Vue d'ensemble",
+    "Simulation en direct",
+    "Cycle de fonctionnement (48h)",
     "Comparaison des modèles",
     "Carte du parc",
-    "Importer des données",
+    "Données réelles (CSV)",
 ])
+st.sidebar.markdown("---")
+st.sidebar.caption(
+    "Le moteur de risque utilisé dans ce prototype est une formule pondérée illustrative. "
+    "Remplacez `compute_risk()` par le modèle réellement entraîné (chapitre 2) avant toute "
+    "présentation comme résultat final."
+)
 
-# ----------------------------------------------------------------------------
-# Onglet 1 — Simulation manuelle
-# ----------------------------------------------------------------------------
-with tab1:
-    col_ctrl, col_res = st.columns([1, 1.2])
+# ============================================================================
+# PAGE — VUE D'ENSEMBLE
+# ============================================================================
+if page == "Vue d'ensemble":
+    st.title("Système intelligent de prédiction de défaillance")
+    st.markdown('<span class="ref-badge">Chapitre 3</span>', unsafe_allow_html=True)
+    st.write("")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi("Transformateurs surveillés", "14", "parc de démonstration")
+    with c2: kpi("Variables suivies", "5", "électriques + climatiques")
+    with c3: kpi("Modèles comparés", "5", "chapitre 2, section 2.7")
+    with c4: kpi("Niveaux d'alerte", "3", "normal / surveillance / critique")
+
+    st.write("")
+    col_a, col_b = st.columns([1.1, 1])
+    with col_a:
+        st.subheader("Architecture du système")
+        ref("Section 3.2")
+        components.html(architecture_visual_html(), height=340, scrolling=False)
+    with col_b:
+        st.subheader("Pipeline de traitement")
+        ref("Section 3.4")
+        components.html(pipeline_visual_html(), height=210, scrolling=False)
+        st.markdown("""
+        <div class="section-note">
+        Chaque mesure capteur traverse successivement le prétraitement (nettoyage,
+        normalisation), le modèle d'intelligence artificielle entraîné, puis la couche
+        applicative qui génère l'indice de risque et l'alerte associée.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.subheader("Comment naviguer ce tableau de bord")
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        st.markdown("**Simulation en direct**")
+        st.caption("Ajustez les capteurs d'un transformateur et observez l'interprétation du modèle en temps réel.")
+    with d2:
+        st.markdown("**Cycle 48h**")
+        st.caption("Rejoue un cycle jour/nuit avec option de surcharge progressive — détection de dérive (3.6).")
+    with d3:
+        st.markdown("**Carte du parc**")
+        st.caption("Vue de supervision multi-transformateurs, dans l'esprit d'une intégration SCADA (3.9).")
+
+# ============================================================================
+# PAGE — SIMULATION EN DIRECT (réactive, sans bouton)
+# ============================================================================
+elif page == "Simulation en direct":
+    st.title("Simulation en direct")
+    ref("Sections 3.4 – 3.5")
+    st.caption("Tout changement de capteur recalcule immédiatement l'indice de risque et son interprétation.")
+
+    components.html(pipeline_visual_html(), height=190, scrolling=False)
+
+    col_ctrl, col_res = st.columns([1, 1.3])
 
     with col_ctrl:
-        st.subheader("Capteurs du transformateur")
-
+        st.markdown("##### Capteurs du transformateur")
         preset_name = st.selectbox("Scénario préconstruit", ["— Réglage manuel —"] + list(PRESETS.keys()))
         defaults = PRESETS.get(preset_name, dict(charge=60, oil=58, ambient=33, humidity=22, voltage=2, season="seche"))
 
@@ -135,99 +364,101 @@ with tab1:
         ambient = st.slider("Température ambiante (°C)", 15, 45, defaults["ambient"])
         humidity = st.slider("Humidité relative (%)", 10, 95, defaults["humidity"])
         voltage = st.slider("Écart de tension par rapport au nominal (%)", -15, 15, defaults["voltage"])
-        season = st.radio("Saison", ["seche", "pluvieuse"], format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse",
+        season = st.radio("Saison", ["seche", "pluvieuse"],
+                           format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse",
                            index=0 if defaults["season"] == "seche" else 1, horizontal=True)
 
-        run = st.button("Transmettre au modèle IA", type="primary", use_container_width=True)
+    score, contribs = compute_risk(charge, oil, ambient, humidity, voltage, season)
+    label, color = classify(score)
+    v_display = {
+        "Charge": f"{charge} %", "Température huile": f"{oil} °C",
+        "Température ambiante": f"{ambient} °C", "Humidité": f"{humidity} %",
+        "Écart de tension": f"{voltage:+d} %",
+    }
 
     with col_res:
-        st.subheader("Interprétation du modèle")
-        if run or preset_name != "— Réglage manuel —":
-            with st.spinner("Prétraitement puis calcul de l'indice de risque..."):
-                time.sleep(0.4)
-            score, contribs = compute_risk(charge, oil, ambient, humidity, voltage, season)
-            label, emoji, color = classify(score)
+        st.markdown("##### Interprétation du modèle")
+        g1, g2 = st.columns([1, 1])
+        with g1:
+            st.plotly_chart(plotly_gauge(score, color), use_container_width=True, config={"displayModeBar": False})
+        with g2:
+            st.markdown(f"""
+            <div style="padding:12px 16px;border-radius:8px;background:{color}22;color:{color};
+                        font-weight:700;text-align:center;margin-top:36px;">{label}</div>
+            """, unsafe_allow_html=True)
+            st.caption("Classification déduite des seuils définis en section 3.6 à partir des courbes ROC du chapitre 2.")
 
-            m1, m2 = st.columns(2)
-            m1.metric("Indice de risque", f"{score:.0f} / 100")
-            m2.markdown(
-                f"<div style='padding:10px 14px;border-radius:8px;background:{color}22;"
-                f"color:{color};font-weight:600;text-align:center;margin-top:6px;'>{emoji} {label}</div>",
-                unsafe_allow_html=True,
-            )
+        st.markdown("**Facteurs contribuant au risque**")
+        st.plotly_chart(plotly_factors(contribs, v_display), use_container_width=True, config={"displayModeBar": False})
+        st.info(explain(v_display, contribs, season))
 
-            st.markdown("**Facteurs contribuant au risque**")
-            v_display = {
-                "Charge": f"{charge} %", "Température huile": f"{oil} °C",
-                "Température ambiante": f"{ambient} °C", "Humidité": f"{humidity} %",
-                "Écart de tension": f"{voltage:+d} %",
-            }
-            df_c = pd.DataFrame({"Facteur": list(contribs.keys()), "Contribution": list(contribs.values())})
-            df_c = df_c.sort_values("Contribution", ascending=True)
-            st.bar_chart(df_c.set_index("Facteur"))
-
-            st.info(explain(v_display, contribs, season))
-        else:
-            st.write("Ajustez les capteurs ou choisissez un scénario, puis transmettez au modèle.")
-
-# ----------------------------------------------------------------------------
-# Onglet 2 — Série temporelle (simulation dynamique)
-# ----------------------------------------------------------------------------
-with tab2:
-    st.subheader("Simulation d'un cycle de fonctionnement (48 heures)")
-    st.caption("Cycle jour/nuit sur la température et l'humidité, avec option de surcharge progressive — illustre la détection de dérive (section 3.6).")
+# ============================================================================
+# PAGE — CYCLE DE FONCTIONNEMENT 48H
+# ============================================================================
+elif page == "Cycle de fonctionnement (48h)":
+    st.title("Simulation d'un cycle de fonctionnement")
+    ref("Section 3.5 – 3.6")
+    st.caption("Cycle jour/nuit sur température et humidité, avec option de surcharge progressive — illustre la détection de dérive.")
 
     c1, c2 = st.columns(2)
     overload = c1.checkbox("Simuler une surcharge progressive à partir de h=24", value=True)
-    season_ts = c2.radio("Saison", ["seche", "pluvieuse"], format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse", horizontal=True, key="season_ts")
+    season_ts = c2.radio("Saison", ["seche", "pluvieuse"], format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse", horizontal=True)
 
     hours = np.arange(0, 48)
     ambient_ts = 30 + 10 * np.sin((hours - 9) / 24 * 2 * np.pi) + (5 if season_ts == "seche" else -3)
-    humidity_ts = 25 - 8 * np.sin((hours - 9) / 24 * 2 * np.pi) if season_ts == "seche" else 75 + 10 * np.sin((hours - 6) / 24 * 2 * np.pi)
+    humidity_ts = (25 - 8 * np.sin((hours - 9) / 24 * 2 * np.pi)) if season_ts == "seche" else (75 + 10 * np.sin((hours - 6) / 24 * 2 * np.pi))
     base_charge = 50 + 25 * np.clip(np.sin((hours - 7) / 24 * 2 * np.pi), 0, None)
     charge_ts = base_charge.copy()
     if overload:
-        ramp = np.clip((hours - 24) / 24, 0, 1) * 70
-        charge_ts = charge_ts + ramp
+        charge_ts = charge_ts + np.clip((hours - 24) / 24, 0, 1) * 70
     oil_ts = 45 + 0.5 * charge_ts + 0.3 * (ambient_ts - 30)
     voltage_ts = np.random.default_rng(0).normal(0, 3, size=len(hours))
 
-    scores = []
+    scores, colors = [], []
     for i in range(len(hours)):
         s, _ = compute_risk(charge_ts[i], oil_ts[i], ambient_ts[i], humidity_ts[i], voltage_ts[i], season_ts)
         scores.append(s)
+        colors.append(classify(s)[1])
 
-    df_ts = pd.DataFrame({
-        "Heure": hours, "Charge (%)": charge_ts, "T° huile (°C)": oil_ts,
-        "T° ambiante (°C)": ambient_ts, "Humidité (%)": humidity_ts, "Indice de risque": scores,
-    }).set_index("Heure")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=hours, y=scores, mode="lines", line=dict(color="#4FA3D1", width=2), name="Indice de risque"))
+    fig.add_trace(go.Scatter(x=hours, y=scores, mode="markers",
+                              marker=dict(color=colors, size=6), showlegend=False))
+    fig.add_hrect(y0=0, y1=30, fillcolor="#49B586", opacity=0.06, line_width=0)
+    fig.add_hrect(y0=30, y1=65, fillcolor="#E8A23D", opacity=0.06, line_width=0)
+    fig.add_hrect(y0=65, y1=100, fillcolor="#E0554F", opacity=0.06, line_width=0)
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=320, margin=dict(l=10, r=10, t=10, b=10),
+        xaxis={"title": "Heure", "color": "#8B97AC", "gridcolor": "#1B2436"},
+        yaxis={"title": "Indice de risque", "color": "#8B97AC", "gridcolor": "#1B2436", "range": [0, 100]},
+        font={"color": "#E9ECF2"},
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    play = st.button("Lancer l'animation")
-    chart_ph = st.empty()
-    metric_ph = st.empty()
-
-    if play:
-        for i in range(2, len(hours) + 1):
-            chart_ph.line_chart(df_ts[["Indice de risque"]].iloc[:i])
-            last_score = df_ts["Indice de risque"].iloc[i - 1]
-            label, emoji, color = classify(last_score)
-            metric_ph.markdown(f"**Heure {hours[i-1]}** — indice {last_score:.0f}/100 — {emoji} {label}")
-            time.sleep(0.05)
-    else:
-        chart_ph.line_chart(df_ts[["Indice de risque"]])
+    peak_idx = int(np.argmax(scores))
+    kc1, kc2, kc3 = st.columns(3)
+    with kc1: kpi("Risque maximal atteint", f"{scores[peak_idx]:.0f} / 100", f"à l'heure {hours[peak_idx]}")
+    with kc2: kpi("Heures en zone critique", f"{sum(1 for s in scores if s >= 65)} h", "sur 48 h simulées")
+    with kc3: kpi("Charge maximale simulée", f"{charge_ts.max():.0f} %", "de la puissance nominale")
 
     with st.expander("Voir les variables brutes simulées"):
+        df_ts = pd.DataFrame({
+            "Heure": hours, "Charge (%)": charge_ts.round(1), "T° huile (°C)": oil_ts.round(1),
+            "T° ambiante (°C)": ambient_ts.round(1), "Humidité (%)": humidity_ts.round(1),
+            "Indice de risque": np.round(scores, 1),
+        }).set_index("Heure")
         st.line_chart(df_ts[["Charge (%)", "T° huile (°C)", "T° ambiante (°C)"]])
         st.dataframe(df_ts, use_container_width=True)
 
-# ----------------------------------------------------------------------------
-# Onglet 3 — Comparaison des modèles (chapitre 2)
-# ----------------------------------------------------------------------------
-with tab3:
-    st.subheader("Comparaison des modèles entraînés")
-    st.warning(
-        "Valeurs d'exemple à remplacer par vos résultats réels une fois les modèles entraînés (section 2.9)."
-    )
+# ============================================================================
+# PAGE — COMPARAISON DES MODÈLES
+# ============================================================================
+elif page == "Comparaison des modèles":
+    st.title("Comparaison des modèles entraînés")
+    ref("Section 2.9 – 2.10")
+    st.warning("Valeurs d'exemple à remplacer par vos résultats réels une fois les modèles entraînés.")
+
     df_models = pd.DataFrame({
         "Modèle": ["Régression logistique", "Random Forest", "XGBoost", "SVM", "Réseau de neurones"],
         "Précision": [0.71, 0.86, 0.88, 0.79, 0.84],
@@ -235,18 +466,52 @@ with tab3:
         "Score F1": [0.68, 0.84, 0.86, 0.76, 0.82],
         "AUC-ROC": [0.74, 0.90, 0.92, 0.83, 0.88],
     })
+
+    metrics = ["Précision", "Rappel", "Score F1", "AUC-ROC"]
+    fig = go.Figure()
+    for _, row in df_models.iterrows():
+        fig.add_trace(go.Scatterpolar(
+            r=[row[m] for m in metrics] + [row[metrics[0]]],
+            theta=metrics + [metrics[0]],
+            fill="toself", name=row["Modèle"], opacity=0.55,
+        ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1], color="#8B97AC", gridcolor="#1B2436"),
+            angularaxis=dict(color="#E9ECF2"),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        paper_bgcolor="rgba(0,0,0,0)", height=440,
+        legend=dict(font=dict(color="#E9ECF2")),
+        margin=dict(l=40, r=40, t=30, b=30),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
     st.dataframe(df_models, use_container_width=True, hide_index=True)
-    metric_choice = st.selectbox("Comparer selon", ["Score F1", "AUC-ROC", "Précision", "Rappel"])
-    st.bar_chart(df_models.set_index("Modèle")[[metric_choice]])
+    metric_choice = st.selectbox("Comparer selon", metrics)
+    df_sorted = df_models.sort_values(metric_choice)
+    fig2 = go.Figure(go.Bar(
+        x=df_sorted[metric_choice], y=df_sorted["Modèle"], orientation="h",
+        marker_color="#4FA3D1", text=df_sorted[metric_choice], textposition="outside",
+    ))
+    fig2.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=260,
+        margin=dict(l=10, r=30, t=10, b=10),
+        xaxis={"range": [0, 1], "color": "#8B97AC", "gridcolor": "#1B2436"},
+        yaxis={"color": "#E9ECF2"},
+    )
+    st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
     best = df_models.loc[df_models[metric_choice].idxmax(), "Modèle"]
     st.success(f"Modèle le plus performant selon **{metric_choice}** : **{best}**")
 
-# ----------------------------------------------------------------------------
-# Onglet 4 — Carte du parc de transformateurs
-# ----------------------------------------------------------------------------
-with tab4:
-    st.subheader("Supervision du parc de transformateurs")
-    st.caption("Exemple de vue d'ensemble pour plusieurs postes — illustre l'intégration envisagée au SCADA (section 3.9).")
+# ============================================================================
+# PAGE — CARTE DU PARC
+# ============================================================================
+elif page == "Carte du parc":
+    st.title("Supervision du parc de transformateurs")
+    ref("Section 3.9")
+    st.caption("Vue d'ensemble multi-postes — illustre l'intégration envisagée au système SCADA.")
 
     rng = np.random.default_rng(42)
     n = 14
@@ -261,25 +526,38 @@ with tab4:
         "humidity": rng.integers(15, 85, n),
         "voltage": rng.integers(-10, 10, n),
     })
-    risks = df_map.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage)[0], axis=1)
-    df_map["risque"] = risks
+    df_map["risque"] = df_map.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage)[0], axis=1).round(1)
+    df_map["statut"] = df_map["risque"].apply(lambda s: classify(s)[0])
     df_map["couleur"] = df_map["risque"].apply(lambda s: [224, 85, 79] if s >= 65 else [232, 162, 61] if s >= 30 else [73, 181, 134])
+
+    k1, k2, k3 = st.columns(3)
+    with k1: kpi("Normal", str((df_map["statut"] == "Normal").sum()), "🟢 transformateurs")
+    with k2: kpi("Surveillance renforcée", str((df_map["statut"] == "Surveillance renforcée").sum()), "🟠 transformateurs")
+    with k3: kpi("Critique", str((df_map["statut"] == "Critique").sum()), "🔴 transformateurs")
 
     layer = pdk.Layer(
         "ScatterplotLayer", data=df_map, get_position=["lon", "lat"],
-        get_fill_color="couleur", get_radius=350, pickable=True,
+        get_fill_color="couleur", get_radius=350, pickable=True, get_line_color=[255, 255, 255], line_width_min_pixels=1,
     )
     view_state = pdk.ViewState(latitude=base_lat, longitude=base_lon, zoom=10)
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state,
-                              tooltip={"text": "{id}\nRisque : {risque}"}))
-    st.dataframe(df_map[["id", "charge", "oil", "ambient", "humidity", "risque"]].round(1), use_container_width=True, hide_index=True)
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer], initial_view_state=view_state, map_style=None,
+        tooltip={"text": "{id}\nRisque : {risque}\nStatut : {statut}"},
+    ))
+    st.dataframe(
+        df_map[["id", "charge", "oil", "ambient", "humidity", "risque", "statut"]]
+        .sort_values("risque", ascending=False),
+        use_container_width=True, hide_index=True,
+    )
 
-# ----------------------------------------------------------------------------
-# Onglet 5 — Importer un CSV de mesures réelles
-# ----------------------------------------------------------------------------
-with tab5:
-    st.subheader("Appliquer le modèle à un fichier de mesures")
+# ============================================================================
+# PAGE — DONNÉES RÉELLES (CSV)
+# ============================================================================
+elif page == "Données réelles (CSV)":
+    st.title("Appliquer le modèle à un fichier de mesures")
+    ref("Chapitre 2 — données réelles")
     st.caption("Colonnes attendues : charge, oil, ambient, humidity, voltage, season (seche/pluvieuse)")
+
     file = st.file_uploader("Fichier CSV", type=["csv"])
     if file is not None:
         df_up = pd.read_csv(file)
@@ -289,16 +567,30 @@ with tab5:
         else:
             if "season" not in df_up.columns:
                 df_up["season"] = "seche"
-            results = df_up.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage, r.season)[0], axis=1)
-            df_up["indice_risque"] = results.round(1)
+            df_up["indice_risque"] = df_up.apply(
+                lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage, r.season)[0], axis=1
+            ).round(1)
             df_up["classification"] = df_up["indice_risque"].apply(lambda s: classify(s)[0])
+
+            k1, k2, k3 = st.columns(3)
+            with k1: kpi("Enregistrements traités", str(len(df_up)))
+            with k2: kpi("Risque moyen", f"{df_up['indice_risque'].mean():.1f} / 100")
+            with k3: kpi("Cas critiques", str((df_up["classification"] == "Critique").sum()))
+
             st.dataframe(df_up, use_container_width=True)
-            st.bar_chart(df_up["classification"].value_counts())
+            fig = go.Figure(go.Histogram(x=df_up["indice_risque"], marker_color="#4FA3D1", nbinsx=20))
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=260,
+                margin=dict(l=10, r=10, t=10, b=10),
+                xaxis={"title": "Indice de risque", "color": "#8B97AC", "gridcolor": "#1B2436"},
+                yaxis={"title": "Nombre d'enregistrements", "color": "#8B97AC", "gridcolor": "#1B2436"},
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
             st.download_button(
                 "Télécharger les résultats (CSV)",
                 df_up.to_csv(index=False).encode("utf-8"),
-                "resultats_prediction.csv",
-                "text/csv",
+                "resultats_prediction.csv", "text/csv",
             )
     else:
         st.write("Importez un fichier pour appliquer le modèle à vos propres données.")
