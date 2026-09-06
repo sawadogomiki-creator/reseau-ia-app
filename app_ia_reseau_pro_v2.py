@@ -1,612 +1,304 @@
 """
-Système intelligent de supervision et détection de défauts réseau.
+Système intelligent de prédiction de défaillance des transformateurs de distribution
+--------------------------------------------------------------------------------------
+MAQUETTE STREAMLIT — à connecter à votre vrai modèle entraîné (chapitre 2).
 
-Prototype de recherche combinant :
-  - un score de risque continu (règles physiques, indépendant du ML)
-  - un classifieur XGBoost multi-classes entraîné sur données synthétiques
-  - un historique réel de mesures accumulé en session
-  - un tableau de bord Streamlit pour l'exploration interactive
+La fonction `compute_risk()` ci-dessous utilise une formule pondérée simplifiée,
+construite uniquement pour permettre de tester et de présenter le pipeline
+(capteurs -> prétraitement -> modèle -> interprétation) avant que le modèle réel
+ne soit disponible. Pour brancher votre vrai modèle :
 
-⚠️ Données synthétiques — à valider sur données réelles avant tout usage
-industriel. Ne pas utiliser comme système de protection ou de commande.
+    import joblib
+    model = joblib.load("mon_modele.pkl")
+    proba = model.predict_proba(X)[:, 1] * 100   # remplace compute_risk()
+
+Lancer localement :
+    pip install streamlit pandas numpy pydeck
+    streamlit run app.py
 """
 
-from __future__ import annotations
-
+import time
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
+import pydeck as pdk
 
-from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-    classification_report,
-    roc_auc_score,
-)
-
-# ============================================================
-# CONFIGURATION GÉNÉRALE
-# ============================================================
 st.set_page_config(
-    page_title="IA - Supervision intelligente du réseau",
-    page_icon="⚡",
+    page_title="Prédiction de défaillance des transformateurs — Burkina Faso",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-FEATURES = [
-    "Voltage (V)",
-    "Current (A)",
-    "Temperature (°C)",
-    "Wind Speed (km/h)",
-]
+# ----------------------------------------------------------------------------
+# Moteur de risque (à remplacer par le modèle entraîné du chapitre 2)
+# ----------------------------------------------------------------------------
 
-CLASS_NAMES = {
-    0: "Normal",
-    1: "Surcharge",
-    2: "Sous-tension",
-    3: "Surtension",
-    4: "Surchauffe",
-    5: "Défaut sévère",
-}
-
-CLASS_ICONS = {
-    0: "🟢",
-    1: "🟠",
-    2: "🟠",
-    3: "🔴",
-    4: "🟠",
-    5: "🔴",
-}
-
-# Seuils centralisés (évite les "nombres magiques" dispersés dans le code)
-SEUIL_VIGILANCE = 30.0
-SEUIL_CRITIQUE = 75.0
-
-# Bornes physiques de simulation
-BORNES = {
-    "Voltage (V)": (0.0, 600.0),
-    "Current (A)": (0.0, 400.0),
-    "Temperature (°C)": (-10.0, 130.0),
-    "Wind Speed (km/h)": (0.0, 150.0),
-}
-
-MAX_HISTORIQUE = 200  # nombre max de points conservés en session
-
-SCENARIOS = {
-    "Réseau normal": (220.0, 20.0, 32.0, 15.0),
-    "Surcharge": (195.0, 125.0, 68.0, 15.0),
-    "Sous-tension": (145.0, 45.0, 48.0, 15.0),
-    "Surtension": (330.0, 55.0, 52.0, 20.0),
-    "Surchauffe": (215.0, 70.0, 80.0, 8.0),
-    "Défaut sévère": (70.0, 260.0, 105.0, 25.0),
-}
+def _clamp01(x):
+    return max(0.0, min(1.0, x))
 
 
-# ============================================================
-# OUTILS MATHÉMATIQUES
-# ============================================================
-def sigmoid(x: float) -> float:
-    """Fonction sigmoïde pour obtenir une évolution progressive (évite les
-    changements brusques quand un curseur bouge légèrement)."""
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -50, 50)))
+def compute_risk(charge, oil, ambient, humidity, voltage, season="seche"):
+    """Retourne (score_total, contributions_par_variable)."""
+    charge_stress = (
+        0 if charge <= 60
+        else _clamp01((charge - 60) / 40) * 0.6 if charge <= 100
+        else 0.6 + _clamp01((charge - 100) / 50) * 0.4
+    )
+    oil_stress = (
+        0 if oil <= 70
+        else _clamp01((oil - 70) / 25) * 0.7 if oil <= 95
+        else 0.7 + _clamp01((oil - 95) / 25) * 0.3
+    )
+    amb_stress = (
+        0 if ambient <= 35
+        else _clamp01((ambient - 35) / 7) * 0.7 if ambient <= 42
+        else 0.7 + _clamp01((ambient - 42) / 8) * 0.3
+    )
+    hum_stress = (
+        0 if humidity <= 55
+        else _clamp01((humidity - 55) / 25) * 0.7 if humidity <= 80
+        else 0.7 + _clamp01((humidity - 80) / 15) * 0.3
+    )
+    season_mult = 1.3 if season == "pluvieuse" else 1.0
+    hum_stress = _clamp01(hum_stress * season_mult)
+    v_stress = _clamp01(abs(voltage) / 15)
 
-
-def niveau_depuis_score(score: float) -> str:
-    """Convertit un score de risque (0-100) en niveau qualitatif, à partir
-    des seuils centralisés SEUIL_VIGILANCE / SEUIL_CRITIQUE."""
-    if score >= SEUIL_CRITIQUE:
-        return "CRITIQUE"
-    if score >= SEUIL_VIGILANCE:
-        return "VIGILANCE"
-    return "STABLE"
-
-
-# ============================================================
-# GÉNÉRATION DU DATASET SYNTHÉTIQUE
-# ============================================================
-@st.cache_data
-def generer_dataset(n_par_classe: int = 1200) -> tuple[pd.DataFrame, pd.Series]:
-    """
-    Génère un dataset synthétique par classe de défaut.
-    Les distributions se chevauchent volontairement pour éviter que le
-    modèle apprenne uniquement des seuils triviaux.
-    """
-    rng = np.random.default_rng(42)
-    donnees: list[list[float]] = []
-    labels: list[int] = []
-
-    gabarits = {
-        0: lambda: (rng.normal(220, 7), rng.normal(20, 5), rng.normal(32, 5), rng.normal(15, 6)),
-        1: lambda: (rng.normal(195, 25), rng.normal(115, 35), rng.normal(65, 15), rng.normal(15, 8)),
-        2: lambda: (rng.normal(145, 35), rng.normal(45, 25), rng.normal(48, 12), rng.normal(15, 8)),
-        3: lambda: (rng.normal(330, 65), rng.normal(55, 25), rng.normal(52, 14), rng.normal(20, 10)),
-        4: lambda: (rng.normal(215, 15), rng.normal(65, 25), rng.normal(78, 14), rng.normal(8, 6)),
-        5: lambda: (
-            rng.choice([rng.normal(70, 25), rng.normal(450, 70)]),
-            rng.normal(220, 65),
-            rng.normal(95, 20),
-            rng.normal(25, 15),
-        ),
+    w = {"charge": 35, "oil": 30, "ambient": 15, "humidity": 15, "voltage": 5}
+    contribs = {
+        "Charge": charge_stress * w["charge"],
+        "Température huile": oil_stress * w["oil"],
+        "Température ambiante": amb_stress * w["ambient"],
+        "Humidité": hum_stress * w["humidity"],
+        "Écart de tension": v_stress * w["voltage"],
     }
-
-    for classe, generateur in gabarits.items():
-        for _ in range(n_par_classe):
-            donnees.append(list(generateur()))
-            labels.append(classe)
-
-    X = pd.DataFrame(donnees, columns=FEATURES)
-    y = pd.Series(labels, name="Défaut")
-
-    for col, (lo, hi) in BORNES.items():
-        X[col] = X[col].clip(lo, hi)
-
-    return X, y
+    total = min(100.0, sum(contribs.values()))
+    return total, contribs
 
 
-# ============================================================
-# ENTRAÎNEMENT ET ÉVALUATION
-# ============================================================
-@st.cache_resource
-def entrainer_ia(n_par_classe: int = 1200):
-    X, y = generer_dataset(n_par_classe)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, random_state=42, stratify=y,
-    )
-
-    model = XGBClassifier(
-        n_estimators=180,
-        max_depth=5,
-        learning_rate=0.06,
-        subsample=0.90,
-        colsample_bytree=0.90,
-        objective="multi:softprob",
-        num_class=len(CLASS_NAMES),
-        eval_metric="mlogloss",
-        random_state=42,
-        n_jobs=2,
-    )
-    model.fit(X_train, y_train)
-
-    y_pred = model.predict(X_test)
-    y_proba = model.predict_proba(X_test)
-
-    report = classification_report(
-        y_test, y_pred,
-        labels=list(CLASS_NAMES.keys()),
-        target_names=list(CLASS_NAMES.values()),
-        output_dict=True,
-        zero_division=0,
-    )
-
-    metrics = {
-        "accuracy": accuracy_score(y_test, y_pred),
-        "precision": precision_score(y_test, y_pred, average="weighted", zero_division=0),
-        "recall": recall_score(y_test, y_pred, average="weighted", zero_division=0),
-        "f1": f1_score(y_test, y_pred, average="weighted", zero_division=0),
-        "roc_auc_ovr": roc_auc_score(y_test, y_proba, multi_class="ovr", average="macro"),
-        "confusion": confusion_matrix(y_test, y_pred, labels=list(CLASS_NAMES.keys())),
-        "report": pd.DataFrame(report).T,
-    }
-    return model, metrics
+def classify(score):
+    if score < 30:
+        return "Normal", "🟢", "#49B586"
+    elif score < 65:
+        return "Surveillance renforcée", "🟠", "#E8A23D"
+    else:
+        return "Critique", "🔴", "#E0554F"
 
 
-# ============================================================
-# SCORE DE RISQUE CONTINU (indépendant du modèle ML)
-# ============================================================
-def calculer_score_risque(tension: float, courant: float, temperature: float, vent: float) -> float:
-    """
-    Score continu (0-100) basé sur des règles physiques, indépendant du
-    modèle ML. Évite les changements brusques quand l'utilisateur déplace
-    progressivement les curseurs. C'est une mesure de simulation, pas une
-    probabilité physique garantie de panne.
-    """
-    sous_tension = sigmoid((190 - tension) / 12)
-    surtension = sigmoid((tension - 255) / 15)
-    surcourant = sigmoid((courant - 70) / 18)
-    surchauffe = sigmoid((temperature - 55) / 10)
-    vent_extreme = sigmoid((vent - 70) / 18)
-
-    score = (
-        0.28 * sous_tension
-        + 0.25 * surtension
-        + 0.25 * surcourant
-        + 0.18 * surchauffe
-        + 0.04 * vent_extreme
-    )
-    return float(np.clip(score * 100, 0, 100))
+def explain(v, contribs, season):
+    sorted_c = sorted(contribs.items(), key=lambda kv: kv[1], reverse=True)
+    total = min(100.0, sum(contribs.values()))
+    if total < 30:
+        return "Les valeurs transmises restent dans les plages de fonctionnement normal ; aucun facteur ne présente de contribution significative au risque."
+    top, second = sorted_c[0], sorted_c[1]
+    text = f"Le risque provient principalement de **{top[0].lower()}** ({v[top[0]]})"
+    if second[1] > 3:
+        text += f", combinée à **{second[0].lower()}** ({v[second[0]]})"
+    if season == "pluvieuse":
+        text += ", dans un contexte de saison pluvieuse qui accentue l'effet de l'humidité sur l'isolation"
+    return text + "."
 
 
-# ============================================================
-# DIAGNOSTIC FUSIONNÉ (règles physiques + avis du modèle ML)
-# ============================================================
-def diagnostiquer(
-    score_risque: float,
-    tension: float,
-    courant: float,
-    temperature: float,
-    prediction_ml: int,
-) -> dict:
-    """
-    Diagnostic hybride : les règles physiques (prioritaires, car
-    explicables et déterministes) fixent la nature et la sévérité de
-    l'anomalie ; le modèle ML sert de second avis. Le dashboard affiche
-    explicitement si les deux sont d'accord, ce qui est important pour la
-    confiance dans un système de supervision.
-    """
-    classe_ml = CLASS_NAMES.get(int(prediction_ml), "Anomalie")
+PRESETS = {
+    "Fonctionnement normal — saison sèche": dict(charge=55, oil=58, ambient=33, humidity=22, voltage=2, season="seche"),
+    "Pic de chaleur": dict(charge=85, oil=88, ambient=43, humidity=18, voltage=3, season="seche"),
+    "Saison pluvieuse": dict(charge=65, oil=62, ambient=27, humidity=87, voltage=-2, season="pluvieuse"),
+}
 
-    def resultat(nature, niveau, actions, classe_regle):
-        accord = CLASS_NAMES.get(classe_regle) == classe_ml if classe_regle is not None else None
-        return {
-            "nature": nature,
-            "niveau": niveau,
-            "actions": actions,
-            "classe_ml": classe_ml,
-            "accord_ml": accord,
-        }
-
-    # Défaut sévère : combinaison de plusieurs anomalies extrêmes.
-    if tension < 80 or tension > 450 or courant > 280 or temperature > 110:
-        return resultat(
-            "Défaut sévère / condition électrique anormale",
-            "CRITIQUE",
-            [
-                "Maintenir la zone concernée dans un état sécurisé.",
-                "Faire vérifier les protections et les mesures par du personnel habilité.",
-                "Identifier la cause avant toute remise en service.",
-            ],
-            classe_regle=5,
-        )
-
-    if tension < 170 and courant > 80:
-        niveau = "CRITIQUE" if score_risque >= SEUIL_CRITIQUE else "VIGILANCE"
-        return resultat(
-            "Sous-tension associée à une forte charge",
-            niveau,
-            [
-                "Vérifier la charge et les protections du départ concerné.",
-                "Surveiller l'évolution simultanée de la tension et du courant.",
-                "Planifier une inspection si la tendance persiste.",
-            ],
-            classe_regle=2,
-        )
-
-    if tension < 170:
-        niveau = "CRITIQUE" if score_risque >= SEUIL_CRITIQUE else "VIGILANCE"
-        return resultat(
-            "Sous-tension détectée",
-            niveau,
-            [
-                "Contrôler la tension du départ concerné.",
-                "Rechercher une surcharge ou une chute de tension.",
-                "Comparer avec l'historique des mesures.",
-            ],
-            classe_regle=2,
-        )
-
-    if tension > 280:
-        niveau = "CRITIQUE" if score_risque >= SEUIL_CRITIQUE else "VIGILANCE"
-        return resultat(
-            "Surtension détectée",
-            niveau,
-            [
-                "Vérifier les protections contre les surtensions.",
-                "Contrôler les équipements et les mesures de tension.",
-                "Ne pas rétablir le fonctionnement sans validation appropriée.",
-            ],
-            classe_regle=3,
-        )
-
-    if courant > 100:
-        niveau = "CRITIQUE" if score_risque >= SEUIL_CRITIQUE else "VIGILANCE"
-        return resultat(
-            "Surcharge / surintensité probable",
-            niveau,
-            [
-                "Contrôler la charge du départ concerné.",
-                "Vérifier les protections et les conditions d'exploitation.",
-                "Surveiller la température et l'évolution du courant.",
-            ],
-            classe_regle=1,
-        )
-
-    if temperature > 65:
-        niveau = "CRITIQUE" if score_risque >= SEUIL_CRITIQUE else "VIGILANCE"
-        return resultat(
-            "Échauffement anormal",
-            niveau,
-            [
-                "Surveiller la température du conducteur ou de l'équipement.",
-                "Vérifier la charge et la ventilation.",
-                "Programmer une inspection si l'échauffement persiste.",
-            ],
-            classe_regle=4,
-        )
-
-    # Zone intermédiaire : on s'appuie surtout sur le score continu et le ML.
-    niveau = niveau_depuis_score(score_risque)
-    if niveau == "STABLE":
-        return resultat(
-            "Fonctionnement normal",
-            "STABLE",
-            [
-                "Continuer la surveillance normale.",
-                "Conserver les mesures pour l'historique.",
-            ],
-            classe_regle=0,
-        )
-
-    return resultat(
-        f"Anomalie progressive détectée — indication IA : {classe_ml}",
-        niveau,
-        [
-            "Renforcer la surveillance du réseau.",
-            "Comparer les valeurs actuelles aux mesures précédentes.",
-            "Programmer un contrôle préventif si la tendance continue.",
-        ],
-        classe_regle=None,
-    )
-
-
-# ============================================================
-# HISTORIQUE RÉEL (accumulé en session, pas simulé à chaque rafraîchissement)
-# ============================================================
-def init_historique() -> None:
-    if "historique" not in st.session_state:
-        st.session_state.historique = pd.DataFrame(
-            columns=["Temps", *FEATURES, "Risque (%)", "Niveau"]
-        )
-
-
-def ajouter_mesure(tension: float, courant: float, temperature: float, vent: float,
-                    score_risque: float, niveau: str) -> None:
-    t = len(st.session_state.historique)
-    nouvelle_ligne = pd.DataFrame([{
-        "Temps": t,
-        "Voltage (V)": tension,
-        "Current (A)": courant,
-        "Temperature (°C)": temperature,
-        "Wind Speed (km/h)": vent,
-        "Risque (%)": score_risque,
-        "Niveau": niveau,
-    }])
-    st.session_state.historique = pd.concat(
-        [st.session_state.historique, nouvelle_ligne], ignore_index=True
-    ).tail(MAX_HISTORIQUE)
-
-
-# ============================================================
-# APPLICATION
-# ============================================================
-st.title("⚡ Système intelligent de supervision et détection des défauts")
+st.title("Système intelligent de prédiction — transformateurs de distribution")
 st.caption(
-    "Prototype de recherche : apprentissage automatique + score de risque "
-    "continu + historique réel de simulation."
+    "Maquette de démonstration du pipeline capteurs → prétraitement → modèle IA → interprétation. "
+    "Le moteur de risque utilisé ici est une formule pondérée simplifiée ; remplacez `compute_risk()` "
+    "par votre modèle réellement entraîné (chapitre 2) avant tout usage en soutenance comme résultat final."
 )
 
-init_historique()
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Simulation manuelle",
+    "Série temporelle",
+    "Comparaison des modèles",
+    "Carte du parc",
+    "Importer des données",
+])
 
-# -------------------- SIDEBAR --------------------
-st.sidebar.header("🎛️ Centre de simulation")
+# ----------------------------------------------------------------------------
+# Onglet 1 — Simulation manuelle
+# ----------------------------------------------------------------------------
+with tab1:
+    col_ctrl, col_res = st.columns([1, 1.2])
 
-mode = st.sidebar.selectbox("Mode de simulation", ["Personnalisé", *SCENARIOS.keys()])
+    with col_ctrl:
+        st.subheader("Capteurs du transformateur")
 
-if mode != "Personnalisé":
-    default_v, default_i, default_t, default_w = SCENARIOS[mode]
-else:
-    default_v, default_i, default_t, default_w = 220.0, 20.0, 32.0, 15.0
+        preset_name = st.selectbox("Scénario préconstruit", ["— Réglage manuel —"] + list(PRESETS.keys()))
+        defaults = PRESETS.get(preset_name, dict(charge=60, oil=58, ambient=33, humidity=22, voltage=2, season="seche"))
 
-val_tension = st.sidebar.slider(
-    "⚡ Tension (V)", *BORNES["Voltage (V)"], float(default_v), 1.0,
-    help="Zone nominale de démonstration : environ 220 V.",
-)
-val_courant = st.sidebar.slider("🔌 Courant (A)", *BORNES["Current (A)"], float(default_i), 1.0)
-val_temp = st.sidebar.slider("🌡️ Température (°C)", *BORNES["Temperature (°C)"], float(default_t), 0.5)
-val_vent = st.sidebar.slider("💨 Vent (km/h)", *BORNES["Wind Speed (km/h)"], float(default_w), 1.0)
+        charge = st.slider("Charge (% de la puissance nominale)", 0, 150, defaults["charge"])
+        oil = st.slider("Température de l'huile (°C)", 30, 120, defaults["oil"])
+        ambient = st.slider("Température ambiante (°C)", 15, 45, defaults["ambient"])
+        humidity = st.slider("Humidité relative (%)", 10, 95, defaults["humidity"])
+        voltage = st.slider("Écart de tension par rapport au nominal (%)", -15, 15, defaults["voltage"])
+        season = st.radio("Saison", ["seche", "pluvieuse"], format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse",
+                           index=0 if defaults["season"] == "seche" else 1, horizontal=True)
 
-with st.sidebar.expander("⚙️ Options avancées"):
-    n_par_classe = st.slider(
-        "Taille du dataset d'entraînement (par classe)", 300, 3000, 1200, 100,
-        help="Plus grand = entraînement plus long mais potentiellement plus stable.",
-    )
-    if st.button("🔄 Vider l'historique de session"):
-        st.session_state.historique = st.session_state.historique.iloc[0:0]
-        st.rerun()
+        run = st.button("Transmettre au modèle IA", type="primary", use_container_width=True)
 
-# -------------------- MODÈLE ET PRÉDICTION --------------------
-model, metrics = entrainer_ia(n_par_classe)
+    with col_res:
+        st.subheader("Interprétation du modèle")
+        if run or preset_name != "— Réglage manuel —":
+            with st.spinner("Prétraitement puis calcul de l'indice de risque..."):
+                time.sleep(0.4)
+            score, contribs = compute_risk(charge, oil, ambient, humidity, voltage, season)
+            label, emoji, color = classify(score)
 
-donnees_utilisateur = pd.DataFrame([{
-    "Voltage (V)": val_tension,
-    "Current (A)": val_courant,
-    "Temperature (°C)": val_temp,
-    "Wind Speed (km/h)": val_vent,
-}])
-
-probabilites_ml = model.predict_proba(donnees_utilisateur[FEATURES])[0]
-prediction_ml = int(model.predict(donnees_utilisateur[FEATURES])[0])
-confiance_ml = float(np.max(probabilites_ml) * 100)
-
-score_risque = calculer_score_risque(val_tension, val_courant, val_temp, val_vent)
-diagnostic = diagnostiquer(score_risque, val_tension, val_courant, val_temp, prediction_ml)
-niveau = diagnostic["niveau"]
-
-ajouter_mesure(val_tension, val_courant, val_temp, val_vent, score_risque, niveau)
-
-# -------------------- EN-TÊTE D'ÉTAT --------------------
-if niveau == "CRITIQUE":
-    st.error(f"🔴 ÉTAT CRITIQUE — Score de risque : {score_risque:.1f}/100")
-elif niveau == "VIGILANCE":
-    st.warning(f"🟠 VIGILANCE — Score de risque : {score_risque:.1f}/100")
-else:
-    st.success(f"🟢 RÉSEAU STABLE — Score de risque : {score_risque:.1f}/100")
-
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Tension", f"{val_tension:.1f} V")
-c2.metric("Courant", f"{val_courant:.1f} A")
-c3.metric("Température", f"{val_temp:.1f} °C")
-c4.metric("Risque", f"{score_risque:.1f} / 100")
-c5.metric("Confiance IA", f"{confiance_ml:.1f} %")
-
-st.markdown("---")
-
-# -------------------- ONGLETS --------------------
-tab_diag, tab_tendances, tab_perf, tab_hist, tab_info = st.tabs(
-    ["🔮 Diagnostic", "📈 Tendances", "📊 Performance IA", "📋 Historique", "ℹ️ À propos"]
-)
-
-with tab_diag:
-    col1, col2 = st.columns(2)
-
-    with col1:
-        icon = "🔴" if niveau == "CRITIQUE" else "🟠" if niveau == "VIGILANCE" else "🟢"
-        st.subheader(f"{icon} {diagnostic['nature']}")
-        st.write(f"**Niveau :** {niveau}")
-        st.write(f"**Classe prédite par l'IA :** {CLASS_ICONS[prediction_ml]} {diagnostic['classe_ml']}")
-        st.write(f"**Confiance de la classe IA :** {confiance_ml:.1f} %")
-
-        if diagnostic["accord_ml"] is True:
-            st.info("✅ Le diagnostic par règles physiques et la classe prédite par l'IA concordent.")
-        elif diagnostic["accord_ml"] is False:
-            st.warning(
-                "⚠️ Désaccord entre les règles physiques et le modèle IA — "
-                "à interpréter avec prudence, une vérification manuelle est recommandée."
+            m1, m2 = st.columns(2)
+            m1.metric("Indice de risque", f"{score:.0f} / 100")
+            m2.markdown(
+                f"<div style='padding:10px 14px;border-radius:8px;background:{color}22;"
+                f"color:{color};font-weight:600;text-align:center;margin-top:6px;'>{emoji} {label}</div>",
+                unsafe_allow_html=True,
             )
 
-        st.subheader("🛠️ Recommandations")
-        for i, action in enumerate(diagnostic["actions"], start=1):
-            st.write(f"**{i}.** {action}")
+            st.markdown("**Facteurs contribuant au risque**")
+            v_display = {
+                "Charge": f"{charge} %", "Température huile": f"{oil} °C",
+                "Température ambiante": f"{ambient} °C", "Humidité": f"{humidity} %",
+                "Écart de tension": f"{voltage:+d} %",
+            }
+            df_c = pd.DataFrame({"Facteur": list(contribs.keys()), "Contribution": list(contribs.values())})
+            df_c = df_c.sort_values("Contribution", ascending=True)
+            st.bar_chart(df_c.set_index("Facteur"))
 
-    with col2:
-        st.subheader("🧠 Répartition des probabilités du modèle")
-        proba_df = pd.DataFrame({
-            "Défaut": [CLASS_NAMES[i] for i in range(len(CLASS_NAMES))],
-            "Probabilité (%)": probabilites_ml * 100,
-        }).sort_values("Probabilité (%)", ascending=False)
-        st.dataframe(
-            proba_df.style.format({"Probabilité (%)": "{:.2f}"}),
-            use_container_width=True, hide_index=True,
-        )
+            st.info(explain(v_display, contribs, season))
+        else:
+            st.write("Ajustez les capteurs ou choisissez un scénario, puis transmettez au modèle.")
 
-        st.subheader("🔍 Importance des variables")
-        importance_df = pd.DataFrame({
-            "Variable": FEATURES,
-            "Importance": model.feature_importances_,
-        }).sort_values("Importance", ascending=False)
-        fig, ax = plt.subplots(figsize=(6, 3))
-        ax.barh(importance_df["Variable"][::-1], importance_df["Importance"][::-1])
-        ax.set_xlabel("Importance relative")
-        ax.grid(True, axis="x", linestyle=":", alpha=0.5)
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
+# ----------------------------------------------------------------------------
+# Onglet 2 — Série temporelle (simulation dynamique)
+# ----------------------------------------------------------------------------
+with tab2:
+    st.subheader("Simulation d'un cycle de fonctionnement (48 heures)")
+    st.caption("Cycle jour/nuit sur la température et l'humidité, avec option de surcharge progressive — illustre la détection de dérive (section 3.6).")
 
-with tab_tendances:
-    hist = st.session_state.historique
-    if len(hist) < 2:
-        st.info("Déplace les curseurs pour accumuler des points d'historique et voir les tendances.")
+    c1, c2 = st.columns(2)
+    overload = c1.checkbox("Simuler une surcharge progressive à partir de h=24", value=True)
+    season_ts = c2.radio("Saison", ["seche", "pluvieuse"], format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse", horizontal=True, key="season_ts")
+
+    hours = np.arange(0, 48)
+    ambient_ts = 30 + 10 * np.sin((hours - 9) / 24 * 2 * np.pi) + (5 if season_ts == "seche" else -3)
+    humidity_ts = 25 - 8 * np.sin((hours - 9) / 24 * 2 * np.pi) if season_ts == "seche" else 75 + 10 * np.sin((hours - 6) / 24 * 2 * np.pi)
+    base_charge = 50 + 25 * np.clip(np.sin((hours - 7) / 24 * 2 * np.pi), 0, None)
+    charge_ts = base_charge.copy()
+    if overload:
+        ramp = np.clip((hours - 24) / 24, 0, 1) * 70
+        charge_ts = charge_ts + ramp
+    oil_ts = 45 + 0.5 * charge_ts + 0.3 * (ambient_ts - 30)
+    voltage_ts = np.random.default_rng(0).normal(0, 3, size=len(hours))
+
+    scores = []
+    for i in range(len(hours)):
+        s, _ = compute_risk(charge_ts[i], oil_ts[i], ambient_ts[i], humidity_ts[i], voltage_ts[i], season_ts)
+        scores.append(s)
+
+    df_ts = pd.DataFrame({
+        "Heure": hours, "Charge (%)": charge_ts, "T° huile (°C)": oil_ts,
+        "T° ambiante (°C)": ambient_ts, "Humidité (%)": humidity_ts, "Indice de risque": scores,
+    }).set_index("Heure")
+
+    play = st.button("Lancer l'animation")
+    chart_ph = st.empty()
+    metric_ph = st.empty()
+
+    if play:
+        for i in range(2, len(hours) + 1):
+            chart_ph.line_chart(df_ts[["Indice de risque"]].iloc[:i])
+            last_score = df_ts["Indice de risque"].iloc[i - 1]
+            label, emoji, color = classify(last_score)
+            metric_ph.markdown(f"**Heure {hours[i-1]}** — indice {last_score:.0f}/100 — {emoji} {label}")
+            time.sleep(0.05)
     else:
-        g1, g2 = st.columns(2)
-        with g1:
-            st.subheader("Évolution des mesures")
-            fig1, ax1 = plt.subplots(figsize=(8, 4))
-            ax1.plot(hist["Temps"], hist["Voltage (V)"], label="Tension (V)")
-            ax1.plot(hist["Temps"], hist["Current (A)"], label="Courant (A)")
-            ax1.plot(hist["Temps"], hist["Temperature (°C)"], label="Température (°C)")
-            ax1.set_xlabel("Interaction n°")
-            ax1.set_ylabel("Valeur")
-            ax1.grid(True, linestyle=":", alpha=0.5)
-            ax1.legend()
-            st.pyplot(fig1, use_container_width=True)
-            plt.close(fig1)
+        chart_ph.line_chart(df_ts[["Indice de risque"]])
 
-        with g2:
-            st.subheader("Évolution du risque")
-            fig2, ax2 = plt.subplots(figsize=(8, 4))
-            ax2.plot(hist["Temps"], hist["Risque (%)"], linewidth=2)
-            ax2.axhline(SEUIL_VIGILANCE, linestyle="--", color="orange", label="Seuil vigilance")
-            ax2.axhline(SEUIL_CRITIQUE, linestyle="--", color="red", label="Seuil critique")
-            ax2.set_ylim(0, 100)
-            ax2.set_xlabel("Interaction n°")
-            ax2.set_ylabel("Score de risque")
-            ax2.grid(True, linestyle=":", alpha=0.5)
-            ax2.legend()
-            st.pyplot(fig2, use_container_width=True)
-            plt.close(fig2)
+    with st.expander("Voir les variables brutes simulées"):
+        st.line_chart(df_ts[["Charge (%)", "T° huile (°C)", "T° ambiante (°C)"]])
+        st.dataframe(df_ts, use_container_width=True)
 
-with tab_perf:
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Accuracy", f"{metrics['accuracy'] * 100:.2f} %")
-    m2.metric("Precision", f"{metrics['precision'] * 100:.2f} %")
-    m3.metric("Recall", f"{metrics['recall'] * 100:.2f} %")
-    m4.metric("F1-score", f"{metrics['f1'] * 100:.2f} %")
-    m5.metric("ROC-AUC (macro)", f"{metrics['roc_auc_ovr'] * 100:.2f} %")
-
-    st.write("### Rapport de classification détaillé")
-    st.dataframe(metrics["report"].round(3), use_container_width=True)
-
-    st.write("### Matrice de confusion")
-    cm = metrics["confusion"]
-    fig4, ax4 = plt.subplots(figsize=(7, 5))
-    image = ax4.imshow(cm)
-    ax4.set_xticks(range(len(CLASS_NAMES)))
-    ax4.set_yticks(range(len(CLASS_NAMES)))
-    ax4.set_xticklabels(CLASS_NAMES.values(), rotation=35, ha="right")
-    ax4.set_yticklabels(CLASS_NAMES.values())
-    ax4.set_xlabel("Classe prédite")
-    ax4.set_ylabel("Classe réelle")
-    ax4.set_title("Matrice de confusion")
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            ax4.text(j, i, cm[i, j], ha="center", va="center")
-    fig4.colorbar(image, ax=ax4)
-    st.pyplot(fig4, use_container_width=True)
-    plt.close(fig4)
-
-    st.caption(
-        "Ces métriques mesurent la capacité du modèle à distinguer les distributions "
-        "synthétiques définies dans le code — pas une performance sur données réelles."
+# ----------------------------------------------------------------------------
+# Onglet 3 — Comparaison des modèles (chapitre 2)
+# ----------------------------------------------------------------------------
+with tab3:
+    st.subheader("Comparaison des modèles entraînés")
+    st.warning(
+        "Valeurs d'exemple à remplacer par vos résultats réels une fois les modèles entraînés (section 2.9)."
     )
+    df_models = pd.DataFrame({
+        "Modèle": ["Régression logistique", "Random Forest", "XGBoost", "SVM", "Réseau de neurones"],
+        "Précision": [0.71, 0.86, 0.88, 0.79, 0.84],
+        "Rappel": [0.65, 0.83, 0.85, 0.74, 0.80],
+        "Score F1": [0.68, 0.84, 0.86, 0.76, 0.82],
+        "AUC-ROC": [0.74, 0.90, 0.92, 0.83, 0.88],
+    })
+    st.dataframe(df_models, use_container_width=True, hide_index=True)
+    metric_choice = st.selectbox("Comparer selon", ["Score F1", "AUC-ROC", "Précision", "Rappel"])
+    st.bar_chart(df_models.set_index("Modèle")[[metric_choice]])
+    best = df_models.loc[df_models[metric_choice].idxmax(), "Modèle"]
+    st.success(f"Modèle le plus performant selon **{metric_choice}** : **{best}**")
 
-with tab_hist:
-    st.dataframe(st.session_state.historique.round(2), use_container_width=True, hide_index=True)
-    csv = st.session_state.historique.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Télécharger l'historique CSV", data=csv,
-        file_name="historique_simulation_reseau.csv", mime="text/csv",
+# ----------------------------------------------------------------------------
+# Onglet 4 — Carte du parc de transformateurs
+# ----------------------------------------------------------------------------
+with tab4:
+    st.subheader("Supervision du parc de transformateurs")
+    st.caption("Exemple de vue d'ensemble pour plusieurs postes — illustre l'intégration envisagée au SCADA (section 3.9).")
+
+    rng = np.random.default_rng(42)
+    n = 14
+    base_lat, base_lon = 12.3714, -1.5197  # Ouagadougou
+    df_map = pd.DataFrame({
+        "id": [f"TR-{i+1:03d}" for i in range(n)],
+        "lat": base_lat + rng.normal(0, 0.05, n),
+        "lon": base_lon + rng.normal(0, 0.05, n),
+        "charge": rng.integers(30, 140, n),
+        "oil": rng.integers(45, 105, n),
+        "ambient": rng.integers(25, 42, n),
+        "humidity": rng.integers(15, 85, n),
+        "voltage": rng.integers(-10, 10, n),
+    })
+    risks = df_map.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage)[0], axis=1)
+    df_map["risque"] = risks
+    df_map["couleur"] = df_map["risque"].apply(lambda s: [224, 85, 79] if s >= 65 else [232, 162, 61] if s >= 30 else [73, 181, 134])
+
+    layer = pdk.Layer(
+        "ScatterplotLayer", data=df_map, get_position=["lon", "lat"],
+        get_fill_color="couleur", get_radius=350, pickable=True,
     )
+    view_state = pdk.ViewState(latitude=base_lat, longitude=base_lon, zoom=10)
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state,
+                              tooltip={"text": "{id}\nRisque : {risque}"}))
+    st.dataframe(df_map[["id", "charge", "oil", "ambient", "humidity", "risque"]].round(1), use_container_width=True, hide_index=True)
 
-with tab_info:
-    st.markdown(
-        """
-        **Chaîne de fonctionnement :**
-
-        1. Acquisition des valeurs simulées (sliders ou scénarios prédéfinis).
-        2. Vérification et limitation des valeurs physiques de simulation.
-        3. Calcul d'un score de risque continu (règles physiques, indépendant du ML).
-        4. Classification multi-classes avec XGBoost.
-        5. Fusion du diagnostic par règles et de la prédiction IA, avec
-           indicateur explicite d'accord/désaccord entre les deux.
-        6. Accumulation d'un historique réel en session (pas simulé à chaque
-           rafraîchissement).
-        7. Visualisation des tendances et export CSV.
-        8. Évaluation du modèle : accuracy, precision, recall, F1, ROC-AUC,
-           rapport de classification et matrice de confusion.
-
-        **Important :** les données utilisées ici sont synthétiques.
-        Ce prototype doit être validé sur des données électriques réelles
-        avant toute utilisation industrielle.
-        """
-    )
-
-st.caption(
-    "⚠️ Prototype de simulation — ne pas utiliser comme système de "
-    "protection ou de commande d'une installation électrique réelle."
-)
+# ----------------------------------------------------------------------------
+# Onglet 5 — Importer un CSV de mesures réelles
+# ----------------------------------------------------------------------------
+with tab5:
+    st.subheader("Appliquer le modèle à un fichier de mesures")
+    st.caption("Colonnes attendues : charge, oil, ambient, humidity, voltage, season (seche/pluvieuse)")
+    file = st.file_uploader("Fichier CSV", type=["csv"])
+    if file is not None:
+        df_up = pd.read_csv(file)
+        required = {"charge", "oil", "ambient", "humidity", "voltage"}
+        if not required.issubset(df_up.columns):
+            st.error(f"Colonnes manquantes. Attendu au minimum : {sorted(required)}")
+        else:
+            if "season" not in df_up.columns:
+                df_up["season"] = "seche"
+            results = df_up.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage, r.season)[0], axis=1)
+            df_up["indice_risque"] = results.round(1)
+            df_up["classification"] = df_up["indice_risque"].apply(lambda s: classify(s)[0])
+            st.dataframe(df_up, use_container_width=True)
+            st.bar_chart(df_up["classification"].value_counts())
+            st.download_button(
+                "Télécharger les résultats (CSV)",
+                df_up.to_csv(index=False).encode("utf-8"),
+                "resultats_prediction.csv",
+                "text/csv",
+            )
+    else:
+        st.write("Importez un fichier pour appliquer le modèle à vos propres données.")
