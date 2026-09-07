@@ -6,7 +6,7 @@ Tableau de bord de démonstration reliant explicitement les éléments du mémoi
 - Pipeline capteurs -> prétraitement -> modèle -> interprétation (section 3.4)
 - Simulation des conditions de fonctionnement (section 3.5)
 - Détection de dérive / risque progressif (section 3.6)
-- Comparaison des modèles (section 2.9)
+- Console opérateur : schéma du transformateur, capteurs et interprétation en direct (section 3.4)
 - Intégration SCADA / supervision du parc avec horloge de simulation et historique
   des pannes (section 3.9)
 
@@ -68,6 +68,38 @@ st.markdown("""
     }
     .clock-time{font-size:1.3rem;font-weight:700;color:#E9ECF2;}
     .clock-sub{font-size:0.78rem;color:#8B97AC;}
+
+    /* --- Console ingénieur / HMI --- */
+    .hmi-frame{
+        background:#0D141F;border:1px solid #26314A;border-radius:10px;
+        padding:14px;position:relative;
+    }
+    .hmi-frame::before, .hmi-frame::after{
+        content:"";position:absolute;width:14px;height:14px;
+        border:2px solid #E8A23D;opacity:0.55;
+    }
+    .hmi-frame::before{top:6px;left:6px;border-right:none;border-bottom:none;}
+    .hmi-frame::after{bottom:6px;right:6px;border-left:none;border-top:none;}
+    .hmi-title{
+        font-family:'JetBrains Mono','IBM Plex Mono',monospace;font-size:0.72rem;
+        letter-spacing:0.06em;color:#8B97AC;text-transform:uppercase;margin-bottom:6px;
+    }
+    .hmi-panel{
+        background:#141C2A;border:1px solid #26314A;border-radius:8px;
+        padding:12px 14px;
+    }
+    .hmi-readout-label{
+        font-family:'JetBrains Mono','IBM Plex Mono',monospace;font-size:0.68rem;
+        color:#8B97AC;letter-spacing:0.05em;text-transform:uppercase;
+    }
+    .hmi-readout-value{
+        font-family:'JetBrains Mono','IBM Plex Mono',monospace;font-size:1.3rem;
+        font-weight:700;
+    }
+    .hmi-interpret{
+        background:#141C2A;border:1px solid #26314A;border-left:3px solid #4FA3D1;
+        border-radius:6px;padding:12px 16px;font-size:0.92rem;color:#DCE2EC;line-height:1.55;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -288,6 +320,89 @@ def plotly_factors(contribs, v_display):
     return fig
 
 
+def sensor_color(value, warn, crit, absolute=False):
+    """Code couleur individuel d'un capteur, indépendant de l'indice global,
+    pour un affichage de type poste de supervision (chaque mesure a son propre
+    seuil d'alerte)."""
+    v = abs(value) if absolute else value
+    if v >= crit:
+        return "#E0554F"
+    if v >= warn:
+        return "#E8A23D"
+    return "#49B586"
+
+
+def transformer_hmi_svg(charge, oil, ambient, humidity, voltage, status_label, status_color):
+    """Schéma de supervision (mimic diagram) du transformateur : chaque capteur
+    est représenté à l'endroit physique où il est mesuré, avec sa valeur
+    instantanée et son propre code couleur — dans l'esprit d'un écran opérateur
+    SCADA, tout en restant lisible pour un public non spécialiste."""
+    c_charge = sensor_color(charge, 60, 100)
+    c_oil = sensor_color(oil, 70, 95)
+    c_amb = sensor_color(ambient, 35, 42)
+    c_hum = sensor_color(humidity, 55, 80)
+    c_volt = sensor_color(voltage, 5, 10, absolute=True)
+
+    def box(x, y, w, h, label, value, color, lx1, ly1, lx2, ly2):
+        return f"""
+        <line x1="{lx1}" y1="{ly1}" x2="{lx2}" y2="{ly2}" stroke="{color}" stroke-width="1.6" stroke-dasharray="3,3" opacity="0.8"/>
+        <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="#141C2A" stroke="{color}" stroke-width="2"/>
+        <circle cx="{x + 12}" cy="{y + 14}" r="4" fill="{color}"/>
+        <text x="{x + 24}" y="{y + 18}" font-family="monospace" font-size="10" fill="#8B97AC" letter-spacing="0.4">{label}</text>
+        <text x="{x + w/2}" y="{y + h - 12}" font-family="monospace" font-size="19" font-weight="700"
+              fill="{color}" text-anchor="middle">{value}</text>
+        """
+
+    return f"""
+    <svg viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;">
+      <defs>
+        <pattern id="hmigrid" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#161F30" stroke-width="1"/>
+        </pattern>
+      </defs>
+      <rect width="680" height="400" fill="url(#hmigrid)"/>
+
+      <!-- Traverse haute + isolateurs -->
+      <line x1="270" y1="45" x2="410" y2="45" stroke="{c_charge}" stroke-width="3"/>
+      <line x1="300" y1="45" x2="300" y2="80" stroke="{c_charge}" stroke-width="3"/>
+      <line x1="380" y1="45" x2="380" y2="80" stroke="{c_volt}" stroke-width="3"/>
+      <circle cx="300" cy="80" r="7" fill="none" stroke="{c_charge}" stroke-width="3"/>
+      <circle cx="380" cy="80" r="7" fill="none" stroke="{c_volt}" stroke-width="3"/>
+
+      <!-- Cuve principale -->
+      <rect x="255" y="95" width="170" height="130" rx="12" fill="{status_color}" fill-opacity="0.14" stroke="{status_color}" stroke-width="3.5"/>
+      <circle cx="305" cy="160" r="26" fill="none" stroke="{status_color}" stroke-width="2.6"/>
+      <circle cx="375" cy="160" r="26" fill="none" stroke="{status_color}" stroke-width="2.6"/>
+
+      <!-- Ailettes de refroidissement (côté T° huile) -->
+      <line x1="425" y1="115" x2="445" y2="115" stroke="{c_oil}" stroke-width="4"/>
+      <line x1="425" y1="140" x2="445" y2="140" stroke="{c_oil}" stroke-width="4"/>
+      <line x1="425" y1="165" x2="445" y2="165" stroke="{c_oil}" stroke-width="4"/>
+      <line x1="425" y1="190" x2="445" y2="190" stroke="{c_oil}" stroke-width="4"/>
+      <line x1="425" y1="210" x2="445" y2="210" stroke="{c_oil}" stroke-width="4"/>
+
+      <!-- Mise à la terre -->
+      <line x1="340" y1="225" x2="340" y2="255" stroke="#8B97AC" stroke-width="3"/>
+      <line x1="322" y1="255" x2="358" y2="255" stroke="#8B97AC" stroke-width="3"/>
+      <line x1="327" y1="261" x2="353" y2="261" stroke="#8B97AC" stroke-width="2.2"/>
+      <line x1="332" y1="267" x2="348" y2="267" stroke="#8B97AC" stroke-width="1.6"/>
+
+      <!-- Repère -->
+      <text x="340" y="245" font-family="monospace" font-size="10" fill="#8B97AC" text-anchor="middle">TERRE</text>
+
+      {box(20, 30, 160, 60, "COURANT / CHARGE", f"{charge:.0f}%", c_charge, 180, 60, 300, 80)}
+      {box(500, 30, 160, 60, "ÉCART DE TENSION", f"{voltage:+.1f}%", c_volt, 500, 60, 380, 80)}
+      {box(500, 130, 160, 60, "T° HUILE", f"{oil:.0f}°C", c_oil, 500, 160, 447, 155)}
+      {box(20, 130, 160, 60, "T° AMBIANTE", f"{ambient:.0f}°C", c_amb, 180, 160, 255, 160)}
+      {box(20, 260, 160, 60, "HUMIDITÉ RELATIVE", f"{humidity:.0f}%", c_hum, 130, 260, 200, 226)}
+
+      <rect x="240" y="300" width="200" height="66" rx="8" fill="{status_color}" fill-opacity="0.18" stroke="{status_color}" stroke-width="2.4"/>
+      <text x="340" y="325" font-family="monospace" font-size="10" fill="#8B97AC" text-anchor="middle" letter-spacing="0.5">STATUT GLOBAL</text>
+      <text x="340" y="352" font-family="monospace" font-size="16" font-weight="700" fill="{status_color}" text-anchor="middle">{status_label.upper()}</text>
+    </svg>
+    """
+
+
 # ============================================================================
 # ICÔNE DE TRANSFORMATEUR (pictogramme réaliste, colorée selon le statut)
 # ============================================================================
@@ -414,7 +529,6 @@ page = st.sidebar.radio("Navigation", [
     "Vue d'ensemble",
     "Simulation en direct",
     "Cycle de fonctionnement (48h)",
-    "Comparaison des modèles",
     "Carte du parc",
     "Données réelles (CSV)",
 ])
@@ -436,7 +550,7 @@ if page == "Vue d'ensemble":
     c1, c2, c3, c4 = st.columns(4)
     with c1: kpi("Transformateurs surveillés", str(FLEET_SIZE), "parc de démonstration")
     with c2: kpi("Variables suivies", "5", "électriques + climatiques")
-    with c3: kpi("Modèles comparés", "5", "chapitre 2, section 2.7")
+    with c3: kpi("Points de mesure", "5", "par transformateur, temps réel")
     with c4: kpi("Niveaux d'alerte", "3", "normal / surveillance / critique")
 
     st.write("")
@@ -473,27 +587,26 @@ if page == "Vue d'ensemble":
 # PAGE — SIMULATION EN DIRECT (réactive, sans bouton)
 # ============================================================================
 elif page == "Simulation en direct":
-    st.title("Simulation en direct")
+    st.title("Console opérateur — Transformateur")
     ref("Sections 3.4 – 3.5")
-    st.caption("Tout changement de capteur recalcule immédiatement l'indice de risque et son interprétation.")
+    st.caption("Écran de supervision d'un transformateur : chaque capteur est affiché à l'endroit physique où il est mesuré, avec son propre code couleur, comme sur un poste de contrôle réel.")
 
-    components.html(pipeline_visual_html(), height=190, scrolling=False)
-
-    col_ctrl, col_res = st.columns([1, 1.3])
-
-    with col_ctrl:
-        st.markdown("##### Capteurs du transformateur")
+    st.markdown("##### Réglage des capteurs")
+    sc1, sc2 = st.columns([1.4, 1])
+    with sc1:
         preset_name = st.selectbox("Scénario préconstruit", ["— Réglage manuel —"] + list(PRESETS.keys()))
+    with sc2:
         defaults = PRESETS.get(preset_name, dict(charge=60, oil=58, ambient=33, humidity=22, voltage=2, season="seche"))
-
-        charge = st.slider("Charge (% de la puissance nominale)", 0, 150, defaults["charge"])
-        oil = st.slider("Température de l'huile (°C)", 30, 120, defaults["oil"])
-        ambient = st.slider("Température ambiante (°C)", 15, 45, defaults["ambient"])
-        humidity = st.slider("Humidité relative (%)", 10, 95, defaults["humidity"])
-        voltage = st.slider("Écart de tension par rapport au nominal (%)", -15, 15, defaults["voltage"])
         season = st.radio("Saison", ["seche", "pluvieuse"],
                            format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse",
                            index=0 if defaults["season"] == "seche" else 1, horizontal=True)
+
+    s1, s2, s3, s4, s5 = st.columns(5)
+    with s1: charge = st.slider("Charge (%)", 0, 150, defaults["charge"])
+    with s2: oil = st.slider("T° huile (°C)", 30, 120, defaults["oil"])
+    with s3: ambient = st.slider("T° ambiante (°C)", 15, 45, defaults["ambient"])
+    with s4: humidity = st.slider("Humidité (%)", 10, 95, defaults["humidity"])
+    with s5: voltage = st.slider("Écart tension (%)", -15, 15, defaults["voltage"])
 
     score, contribs = compute_risk(charge, oil, ambient, humidity, voltage, season)
     label, color = classify(score)
@@ -503,8 +616,19 @@ elif page == "Simulation en direct":
         "Écart de tension": f"{voltage:+d} %",
     }
 
-    with col_res:
-        st.markdown("##### Interprétation du modèle")
+    st.write("")
+    st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
+    st.markdown('<div class="hmi-title">▣ Schéma de supervision — mesures en temps réel</div>', unsafe_allow_html=True)
+    components.html(transformer_hmi_svg(charge, oil, ambient, humidity, voltage, label, color), height=380, scrolling=False)
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.caption("🟢 Normal · 🟠 Surveillance renforcée · 🔴 Critique — chaque encadré est coloré selon le seuil propre à cette mesure ; la cuve et le statut global suivent l'indice de risque combiné (section 3.6).")
+
+    st.write("")
+    col_interp, col_detail = st.columns([1.1, 1])
+    with col_interp:
+        st.markdown("##### Interprétation en langage clair")
+        st.markdown(f'<div class="hmi-interpret">{explain(v_display, contribs, season)}</div>', unsafe_allow_html=True)
+        st.write("")
         g1, g2 = st.columns([1, 1])
         with g1:
             st.plotly_chart(plotly_gauge(score, color), use_container_width=True, config={"displayModeBar": False})
@@ -513,11 +637,10 @@ elif page == "Simulation en direct":
             <div style="padding:12px 16px;border-radius:8px;background:{color}22;color:{color};
                         font-weight:700;text-align:center;margin-top:36px;">{label}</div>
             """, unsafe_allow_html=True)
-            st.caption("Classification déduite des seuils définis en section 3.6 à partir des courbes ROC du chapitre 2.")
-
-        st.markdown("**Facteurs contribuant au risque**")
+            st.caption("Classification déduite des seuils définis en section 3.6.")
+    with col_detail:
+        st.markdown("##### Poids de chaque facteur dans l'indice")
         st.plotly_chart(plotly_factors(contribs, v_display), use_container_width=True, config={"displayModeBar": False})
-        st.info(explain(v_display, contribs, season))
 
 # ============================================================================
 # PAGE — CYCLE DE FONCTIONNEMENT 48H
@@ -577,60 +700,6 @@ elif page == "Cycle de fonctionnement (48h)":
         }).set_index("Heure")
         st.line_chart(df_ts[["Charge (%)", "T° huile (°C)", "T° ambiante (°C)"]])
         st.dataframe(df_ts, use_container_width=True)
-
-# ============================================================================
-# PAGE — COMPARAISON DES MODÈLES
-# ============================================================================
-elif page == "Comparaison des modèles":
-    st.title("Comparaison des modèles entraînés")
-    ref("Section 2.9 – 2.10")
-    st.warning("Valeurs d'exemple à remplacer par vos résultats réels une fois les modèles entraînés.")
-
-    df_models = pd.DataFrame({
-        "Modèle": ["Régression logistique", "Random Forest", "XGBoost", "SVM", "Réseau de neurones"],
-        "Précision": [0.71, 0.86, 0.88, 0.79, 0.84],
-        "Rappel": [0.65, 0.83, 0.85, 0.74, 0.80],
-        "Score F1": [0.68, 0.84, 0.86, 0.76, 0.82],
-        "AUC-ROC": [0.74, 0.90, 0.92, 0.83, 0.88],
-    })
-
-    metrics = ["Précision", "Rappel", "Score F1", "AUC-ROC"]
-    fig = go.Figure()
-    for _, row in df_models.iterrows():
-        fig.add_trace(go.Scatterpolar(
-            r=[row[m] for m in metrics] + [row[metrics[0]]],
-            theta=metrics + [metrics[0]],
-            fill="toself", name=row["Modèle"], opacity=0.55,
-        ))
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 1], color="#8B97AC", gridcolor="#1B2436"),
-            angularaxis=dict(color="#E9ECF2"),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        paper_bgcolor="rgba(0,0,0,0)", height=440,
-        legend=dict(font=dict(color="#E9ECF2")),
-        margin=dict(l=40, r=40, t=30, b=30),
-    )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-    st.dataframe(df_models, use_container_width=True, hide_index=True)
-    metric_choice = st.selectbox("Comparer selon", metrics)
-    df_sorted = df_models.sort_values(metric_choice)
-    fig2 = go.Figure(go.Bar(
-        x=df_sorted[metric_choice], y=df_sorted["Modèle"], orientation="h",
-        marker_color="#4FA3D1", text=df_sorted[metric_choice], textposition="outside",
-    ))
-    fig2.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=260,
-        margin=dict(l=10, r=30, t=10, b=10),
-        xaxis={"range": [0, 1], "color": "#8B97AC", "gridcolor": "#1B2436"},
-        yaxis={"color": "#E9ECF2"},
-    )
-    st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
-
-    best = df_models.loc[df_models[metric_choice].idxmax(), "Modèle"]
-    st.success(f"Modèle le plus performant selon **{metric_choice}** : **{best}**")
 
 # ============================================================================
 # PAGE — CARTE DU PARC (avec horloge de simulation + historique des pannes)
