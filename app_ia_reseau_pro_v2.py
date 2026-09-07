@@ -185,6 +185,51 @@ def explain(v_display, contribs, season):
     return text + "."
 
 
+# ----------------------------------------------------------------------------
+# PRONOSTIC : délai avant panne estimé et démarche corrective
+# ----------------------------------------------------------------------------
+# Estimation illustrative fondée sur le niveau de l'indice de risque — à
+# remplacer, une fois le modèle entraîné disponible, par une estimation issue
+# d'une analyse de survie / durée de vie résiduelle (RUL) sur données réelles.
+
+def estimate_delay(score):
+    if score < 30:
+        return None, "aucune urgence"
+    elif score < 50:
+        return "plusieurs semaines si la tendance se maintient", "surveillance"
+    elif score < 65:
+        return "quelques jours à une semaine", "surveillance renforcée"
+    elif score < 85:
+        return "quelques heures à 1-2 jours", "intervention rapprochée"
+    else:
+        return "risque de défaillance imminente (moins de quelques heures)", "intervention immédiate"
+
+
+CORRECTIVE_ACTIONS = {
+    "Charge": "Délester une partie de la charge vers un poste voisin ou lisser les pointes de consommation ; "
+              "si la surcharge est récurrente, étudier un renforcement de puissance.",
+    "Température huile": "Contrôler le système de refroidissement (radiateurs, ventilateurs), vérifier le niveau "
+                          "et la qualité de l'huile, et s'assurer qu'aucun encrassement ne bloque la dissipation thermique.",
+    "Température ambiante": "Améliorer la ventilation du poste ou du local, protéger le transformateur de "
+                             "l'ensoleillement direct, et limiter la charge aux heures les plus chaudes.",
+    "Humidité": "Vérifier l'étanchéité de la cuve et des joints, contrôler ou remplacer le gel de silice du "
+                "respirateur, et envisager un séchage de l'huile si l'humidité interne est confirmée.",
+    "Écart de tension": "Vérifier le régulateur de tension et l'équilibrage des phases, contrôler les prises "
+                         "du changeur de régulation, et signaler tout déséquilibre au poste source.",
+}
+
+
+def prognosis(score, contribs):
+    """Retourne (délai estimé, urgence, facteur dominant, action corrective)
+    ou None si le transformateur est en fonctionnement normal."""
+    delay, urgency = estimate_delay(score)
+    if delay is None:
+        return None
+    top_factor = max(contribs.items(), key=lambda kv: kv[1])[0]
+    action = CORRECTIVE_ACTIONS.get(top_factor, "Effectuer une inspection technique du transformateur.")
+    return delay, urgency, top_factor, action
+
+
 PRESETS = {
     "Fonctionnement normal — saison sèche": dict(charge=55, oil=58, ambient=33, humidity=22, voltage=2, season="seche"),
     "Pic de chaleur": dict(charge=85, oil=88, ambient=43, humidity=18, voltage=3, season="seche"),
@@ -442,7 +487,7 @@ _ICON_CACHE = {
 # ÉTAT DE LA SIMULATION DU PARC (horloge + historique des pannes)
 # ============================================================================
 
-FLEET_SIZE = 14
+FLEET_SIZE = 5
 FLEET_BASE_LAT, FLEET_BASE_LON = 12.3714, -1.5197  # Ouagadougou
 
 if "sim_hour" not in st.session_state:
@@ -527,7 +572,7 @@ st.sidebar.title("⚡ Système de prédiction")
 st.sidebar.caption("Transformateurs de distribution — Burkina Faso")
 page = st.sidebar.radio("Navigation", [
     "Vue d'ensemble",
-    "Simulation en direct",
+    "Console opérateur",
     "Cycle de fonctionnement (48h)",
     "Carte du parc",
     "Données réelles (CSV)",
@@ -543,50 +588,87 @@ st.sidebar.caption(
 # PAGE — VUE D'ENSEMBLE
 # ============================================================================
 if page == "Vue d'ensemble":
-    st.title("Système intelligent de prédiction de défaillance")
-    st.markdown('<span class="ref-badge">Chapitre 3</span>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:2px;">
+        <div style="font-size:2.1rem;">⚡</div>
+        <div>
+            <div style="font-size:1.7rem;font-weight:700;color:#E9ECF2;line-height:1.2;">
+                Système intelligent de prédiction de défaillance
+            </div>
+            <div style="font-size:0.88rem;color:#8B97AC;margin-top:2px;">
+                Supervision de 5 transformateurs de distribution — Ouagadougou
+                <span class="ref-badge">Chapitre 3</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.write("")
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Transformateurs surveillés", str(FLEET_SIZE), "parc de démonstration")
-    with c2: kpi("Variables suivies", "5", "électriques + climatiques")
-    with c3: kpi("Points de mesure", "5", "par transformateur, temps réel")
-    with c4: kpi("Niveaux d'alerte", "3", "normal / surveillance / critique")
+    with c1: kpi("Transformateurs surveillés", str(FLEET_SIZE), "parc d'étude")
+    with c2: kpi("Points de mesure", "5", "par transformateur, temps réel")
+    with c3: kpi("Niveaux d'alerte", "3", "normal / surveillance / critique")
+    with c4: kpi("Horloge de simulation", f"h+{st.session_state.sim_hour}", "voir Carte du parc")
+
+    st.write("")
+    st.markdown("##### État instantané du parc")
+    ref("Section 3.9 — snapshot à l'heure simulée actuelle")
+    df_snapshot = fleet_state_at(st.session_state.sim_hour)
+    snap_cols = st.columns(FLEET_SIZE)
+    for i, r in enumerate(df_snapshot.itertuples()):
+        stlabel, stcolor = classify(r.risque)
+        with snap_cols[i]:
+            st.markdown(f"""
+            <div class="hmi-panel" style="text-align:center;border-color:{stcolor}55;">
+                <div style="font-family:monospace;font-size:0.78rem;color:#8B97AC;">{r.id}</div>
+                <div style="font-size:1.5rem;margin:4px 0;">⚡</div>
+                <div style="font-family:monospace;font-weight:700;font-size:1.1rem;color:{stcolor};">{r.risque:.0f}</div>
+                <div style="font-size:0.68rem;color:{stcolor};">{stlabel}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    st.caption("Valeurs recalculées automatiquement à partir de l'horloge de simulation (page « Carte du parc »).")
 
     st.write("")
     col_a, col_b = st.columns([1.1, 1])
     with col_a:
-        st.subheader("Architecture du système")
+        st.markdown("##### Architecture du système")
         ref("Section 3.2")
+        st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
         components.html(architecture_visual_html(), height=340, scrolling=False)
+        st.markdown('</div>', unsafe_allow_html=True)
     with col_b:
-        st.subheader("Pipeline de traitement")
+        st.markdown("##### Pipeline de traitement")
         ref("Section 3.4")
+        st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
         components.html(pipeline_visual_html(), height=210, scrolling=False)
+        st.markdown('</div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="section-note">
         Chaque mesure capteur traverse successivement le prétraitement (nettoyage,
         normalisation), le modèle d'intelligence artificielle entraîné, puis la couche
-        applicative qui génère l'indice de risque et l'alerte associée.
+        applicative qui génère l'indice de risque, l'alerte et — au-delà d'un certain
+        seuil — un délai estimé avant panne et une démarche corrective (voir « Console
+        opérateur »).
         </div>
         """, unsafe_allow_html=True)
 
-    st.subheader("Comment naviguer ce tableau de bord")
+    st.write("")
+    st.markdown("##### Comment naviguer ce tableau de bord")
     d1, d2, d3 = st.columns(3)
     with d1:
-        st.markdown("**Simulation en direct**")
-        st.caption("Ajustez les capteurs d'un transformateur et observez l'interprétation du modèle en temps réel.")
+        st.markdown("**🖥️ Console opérateur**")
+        st.caption("Réglez les capteurs d'un transformateur : schéma en direct, interprétation, délai estimé avant panne et démarche corrective.")
     with d2:
-        st.markdown("**Cycle 48h**")
+        st.markdown("**📈 Cycle 48h**")
         st.caption("Rejoue un cycle jour/nuit avec option de surcharge progressive — détection de dérive (3.6).")
     with d3:
-        st.markdown("**Carte du parc**")
-        st.caption("Supervision multi-transformateurs avec horloge de simulation et historique des pannes, dans l'esprit d'une intégration SCADA (3.9).")
+        st.markdown("**🗺️ Carte du parc**")
+        st.caption("Supervision des 5 transformateurs avec horloge de simulation et historique des pannes, dans l'esprit d'une intégration SCADA (3.9).")
 
 # ============================================================================
 # PAGE — SIMULATION EN DIRECT (réactive, sans bouton)
 # ============================================================================
-elif page == "Simulation en direct":
+elif page == "Console opérateur":
     st.title("Console opérateur — Transformateur")
     ref("Sections 3.4 – 3.5")
     st.caption("Écran de supervision d'un transformateur : chaque capteur est affiché à l'endroit physique où il est mesuré, avec son propre code couleur, comme sur un poste de contrôle réel.")
@@ -628,6 +710,26 @@ elif page == "Simulation en direct":
     with col_interp:
         st.markdown("##### Interprétation en langage clair")
         st.markdown(f'<div class="hmi-interpret">{explain(v_display, contribs, season)}</div>', unsafe_allow_html=True)
+
+        prog = prognosis(score, contribs)
+        if prog:
+            delay, urgency, top_factor, action = prog
+            st.write("")
+            st.markdown(f"""
+            <div style="background:#141C2A;border:1px solid #26314A;border-left:3px solid {color};
+                        border-radius:6px;padding:12px 16px;">
+                <div style="font-family:monospace;font-size:0.7rem;color:{color};text-transform:uppercase;
+                            letter-spacing:0.05em;margin-bottom:6px;">⚠ Pronostic — {urgency}</div>
+                <div style="font-size:0.9rem;color:#DCE2EC;margin-bottom:10px;">
+                    Si les conditions actuelles persistent, une panne liée à
+                    <b>{top_factor.lower()}</b> est possible d'ici <b>{delay}</b>.
+                </div>
+                <div style="font-family:monospace;font-size:0.7rem;color:#8B97AC;text-transform:uppercase;
+                            letter-spacing:0.05em;margin-bottom:6px;">🔧 Démarche corrective recommandée</div>
+                <div style="font-size:0.9rem;color:#DCE2EC;">{action}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.caption("Estimation illustrative basée sur l'indice de risque actuel — à affiner avec une analyse de durée de vie résiduelle une fois le modèle entraîné sur données réelles (chapitre 2).")
         st.write("")
         g1, g2 = st.columns([1, 1])
         with g1:
@@ -781,9 +883,14 @@ elif page == "Carte du parc":
         use_container_width=True, height=560,
     )
 
+    df_map["delai_estime"] = df_map.apply(
+        lambda r: (estimate_delay(r["risque"])[0] or "—"), axis=1
+    )
+
     st.dataframe(
-        df_map[["id", "charge", "oil", "ambient", "humidity", "risque", "statut"]]
-        .sort_values("risque", ascending=False),
+        df_map[["id", "charge", "oil", "ambient", "humidity", "risque", "statut", "delai_estime"]]
+        .sort_values("risque", ascending=False)
+        .rename(columns={"delai_estime": "Délai estimé avant panne"}),
         use_container_width=True, hide_index=True,
     )
 
