@@ -7,7 +7,8 @@ Tableau de bord de démonstration reliant explicitement les éléments du mémoi
 - Simulation des conditions de fonctionnement (section 3.5)
 - Détection de dérive / risque progressif (section 3.6)
 - Comparaison des modèles (section 2.9)
-- Intégration SCADA / supervision du parc (section 3.9)
+- Intégration SCADA / supervision du parc avec horloge de simulation et historique
+  des pannes (section 3.9)
 
 La fonction `compute_risk()` utilise une formule pondérée simplifiée, construite pour
 tester et présenter le pipeline avant que le vrai modèle entraîné ne soit disponible.
@@ -21,6 +22,9 @@ Lancer localement :
     pip install -r requirements.txt
     streamlit run app.py
 """
+
+import base64
+import time
 
 import numpy as np
 import pandas as pd
@@ -57,6 +61,13 @@ st.markdown("""
         background:#141C2A;border-left:3px solid #E8A23D;border-radius:4px;
         padding:10px 14px;font-size:0.85rem;color:#C4CCDA;margin:10px 0 18px;
     }
+    .clock-banner{
+        background:#141C2A;border:1px solid #26314A;border-radius:10px;
+        padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;
+        justify-content:space-between;flex-wrap:wrap;gap:10px;
+    }
+    .clock-time{font-size:1.3rem;font-weight:700;color:#E9ECF2;}
+    .clock-sub{font-size:0.78rem;color:#8B97AC;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -278,6 +289,122 @@ def plotly_factors(contribs, v_display):
 
 
 # ============================================================================
+# ICÔNE DE TRANSFORMATEUR (pictogramme réaliste, colorée selon le statut)
+# ============================================================================
+
+def transformer_icon_data_uri(color):
+    """Génère un pictogramme de transformateur de distribution (cuve, isolateurs,
+    mise à la terre) encodé en SVG data-URI, coloré selon le niveau de risque."""
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <line x1="24" y1="4" x2="24" y2="15" stroke="{color}" stroke-width="3"/>
+      <line x1="40" y1="4" x2="40" y2="15" stroke="{color}" stroke-width="3"/>
+      <line x1="16" y1="4" x2="32" y2="4" stroke="{color}" stroke-width="3"/>
+      <circle cx="24" cy="15" r="3.2" fill="none" stroke="{color}" stroke-width="2.4"/>
+      <circle cx="40" cy="15" r="3.2" fill="none" stroke="{color}" stroke-width="2.4"/>
+      <rect x="12" y="19" width="40" height="28" rx="5"
+            fill="{color}" fill-opacity="0.22" stroke="{color}" stroke-width="3"/>
+      <circle cx="24" cy="33" r="6.5" fill="none" stroke="{color}" stroke-width="2.4"/>
+      <circle cx="40" cy="33" r="6.5" fill="none" stroke="{color}" stroke-width="2.4"/>
+      <line x1="8" y1="26" x2="12" y2="26" stroke="{color}" stroke-width="2.4"/>
+      <line x1="8" y1="34" x2="12" y2="34" stroke="{color}" stroke-width="2.4"/>
+      <line x1="8" y1="42" x2="12" y2="42" stroke="{color}" stroke-width="2.4"/>
+      <line x1="32" y1="47" x2="32" y2="55" stroke="{color}" stroke-width="3"/>
+      <line x1="23" y1="55" x2="41" y2="55" stroke="{color}" stroke-width="3"/>
+      <line x1="26" y1="59" x2="38" y2="59" stroke="{color}" stroke-width="2.2"/>
+      <line x1="29" y1="62" x2="35" y2="62" stroke="{color}" stroke-width="1.6"/>
+    </svg>"""
+    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{b64}"
+
+
+_ICON_CACHE = {
+    "#E0554F": transformer_icon_data_uri("#E0554F"),
+    "#E8A23D": transformer_icon_data_uri("#E8A23D"),
+    "#49B586": transformer_icon_data_uri("#49B586"),
+}
+
+# ============================================================================
+# ÉTAT DE LA SIMULATION DU PARC (horloge + historique des pannes)
+# ============================================================================
+
+FLEET_SIZE = 14
+FLEET_BASE_LAT, FLEET_BASE_LON = 12.3714, -1.5197  # Ouagadougou
+
+if "sim_hour" not in st.session_state:
+    st.session_state.sim_hour = 0
+if "running" not in st.session_state:
+    st.session_state.running = False
+if "historique" not in st.session_state:
+    st.session_state.historique = []
+if "last_tick" not in st.session_state:
+    st.session_state.last_tick = time.time()
+if "fleet_base" not in st.session_state:
+    rng0 = np.random.default_rng(42)
+    st.session_state.fleet_base = pd.DataFrame({
+        "id": [f"TR-{i+1:03d}" for i in range(FLEET_SIZE)],
+        "lat": FLEET_BASE_LAT + rng0.normal(0, 0.05, FLEET_SIZE),
+        "lon": FLEET_BASE_LON + rng0.normal(0, 0.05, FLEET_SIZE),
+        "base_charge": rng0.uniform(45, 75, FLEET_SIZE),
+        "fault_prone": rng0.uniform(0, 1, FLEET_SIZE) < 0.3,
+    })
+
+
+def fleet_state_at(hour):
+    """Calcule l'état (capteurs + risque) de chaque transformateur du parc à
+    une heure simulée donnée. Déterministe par heure -> reproductible si on
+    revient en arrière, tout en variant dans le temps (cycle jour/nuit,
+    saison, événements de surcharge occasionnels sur les transfos fragiles)."""
+    base = st.session_state.fleet_base
+    n = len(base)
+    day_frac = hour % 24
+    season = "pluvieuse" if (hour // 24) % 5 == 4 else "seche"
+
+    ambient = 30 + 10 * np.sin((day_frac - 9) / 24 * 2 * np.pi) + (5 if season == "seche" else -3)
+    humidity_center = 25 if season == "seche" else 78
+
+    rng_h = np.random.default_rng(hour)  # même heure -> même tirage
+    charge = base["base_charge"].values + 25 * max(0.0, np.sin((day_frac - 7) / 24 * 2 * np.pi))
+    overload = (rng_h.uniform(0, 1, n) < 0.04) & base["fault_prone"].values
+    charge = charge + overload * rng_h.uniform(40, 85, n)
+
+    oil = 45 + 0.5 * charge + 0.3 * (ambient - 30)
+    humidity = humidity_center + rng_h.normal(0, 5, n)
+    voltage = rng_h.normal(0, 4, n)
+
+    df = base.copy()
+    df["charge"] = np.round(charge, 1)
+    df["oil"] = np.round(oil, 1)
+    df["ambient"] = round(float(ambient), 1)
+    df["humidity"] = np.round(np.clip(humidity, 5, 98), 1)
+    df["voltage"] = np.round(voltage, 1)
+    df["season"] = season
+
+    scores = [
+        compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage, r.season)[0]
+        for r in df.itertuples()
+    ]
+    df["risque"] = np.round(scores, 1)
+    df["statut"] = df["risque"].apply(lambda s: classify(s)[0])
+    return df
+
+
+def advance_time(n_steps=1):
+    for _ in range(n_steps):
+        st.session_state.sim_hour += 1
+        df = fleet_state_at(st.session_state.sim_hour)
+        for r in df[df["statut"] == "Critique"].itertuples():
+            st.session_state.historique.append({
+                "heure_sim": st.session_state.sim_hour,
+                "id": r.id,
+                "risque": r.risque,
+                "charge": r.charge,
+                "oil": r.oil,
+            })
+    if len(st.session_state.historique) > 800:
+        st.session_state.historique = st.session_state.historique[-800:]
+
+
+# ============================================================================
 # NAVIGATION
 # ============================================================================
 
@@ -307,7 +434,7 @@ if page == "Vue d'ensemble":
     st.write("")
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Transformateurs surveillés", "14", "parc de démonstration")
+    with c1: kpi("Transformateurs surveillés", str(FLEET_SIZE), "parc de démonstration")
     with c2: kpi("Variables suivies", "5", "électriques + climatiques")
     with c3: kpi("Modèles comparés", "5", "chapitre 2, section 2.7")
     with c4: kpi("Niveaux d'alerte", "3", "normal / surveillance / critique")
@@ -340,7 +467,7 @@ if page == "Vue d'ensemble":
         st.caption("Rejoue un cycle jour/nuit avec option de surcharge progressive — détection de dérive (3.6).")
     with d3:
         st.markdown("**Carte du parc**")
-        st.caption("Vue de supervision multi-transformateurs, dans l'esprit d'une intégration SCADA (3.9).")
+        st.caption("Supervision multi-transformateurs avec horloge de simulation et historique des pannes, dans l'esprit d'une intégration SCADA (3.9).")
 
 # ============================================================================
 # PAGE — SIMULATION EN DIRECT (réactive, sans bouton)
@@ -506,49 +633,124 @@ elif page == "Comparaison des modèles":
     st.success(f"Modèle le plus performant selon **{metric_choice}** : **{best}**")
 
 # ============================================================================
-# PAGE — CARTE DU PARC
+# PAGE — CARTE DU PARC (avec horloge de simulation + historique des pannes)
 # ============================================================================
 elif page == "Carte du parc":
     st.title("Supervision du parc de transformateurs")
     ref("Section 3.9")
-    st.caption("Vue d'ensemble multi-postes — illustre l'intégration envisagée au système SCADA.")
+    st.caption("Vue d'ensemble multi-postes avec horloge de simulation — illustre l'intégration envisagée au système SCADA.")
 
-    rng = np.random.default_rng(42)
-    n = 14
-    base_lat, base_lon = 12.3714, -1.5197  # Ouagadougou
-    df_map = pd.DataFrame({
-        "id": [f"TR-{i+1:03d}" for i in range(n)],
-        "lat": base_lat + rng.normal(0, 0.05, n),
-        "lon": base_lon + rng.normal(0, 0.05, n),
-        "charge": rng.integers(30, 140, n),
-        "oil": rng.integers(45, 105, n),
-        "ambient": rng.integers(25, 42, n),
-        "humidity": rng.integers(15, 85, n),
-        "voltage": rng.integers(-10, 10, n),
-    })
-    df_map["risque"] = df_map.apply(lambda r: compute_risk(r.charge, r.oil, r.ambient, r.humidity, r.voltage)[0], axis=1).round(1)
-    df_map["statut"] = df_map["risque"].apply(lambda s: classify(s)[0])
-    df_map["couleur"] = df_map["risque"].apply(lambda s: [224, 85, 79] if s >= 65 else [232, 162, 61] if s >= 30 else [73, 181, 134])
+    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 2])
+    with ctrl1:
+        label_btn = "⏸️ Pause" if st.session_state.running else "▶️ Lecture"
+        if st.button(label_btn, use_container_width=True):
+            st.session_state.running = not st.session_state.running
+            st.session_state.last_tick = time.time()
+    with ctrl2:
+        if st.button("⏭️ +1 heure", use_container_width=True):
+            advance_time(1)
+    with ctrl3:
+        if st.button("🔄 Réinitialiser", use_container_width=True):
+            st.session_state.sim_hour = 0
+            st.session_state.historique = []
+            st.session_state.running = False
+    with ctrl4:
+        refresh_interval = st.slider("Vitesse (secondes réelles ≈ 1 heure simulée)", 1, 10, 3)
 
-    k1, k2, k3 = st.columns(3)
+    # avance automatique si en lecture : on ne fait avancer le temps que si
+    # l'intervalle réel choisi s'est bien écoulé, puis on programme un
+    # rechargement de page pour la prochaine étape.
+    if st.session_state.running:
+        now = time.time()
+        if now - st.session_state.last_tick >= refresh_interval:
+            advance_time(1)
+            st.session_state.last_tick = now
+        components.html(f"""
+        <script>
+        setTimeout(function() {{ window.parent.location.reload(); }}, {int(refresh_interval * 1000)});
+        </script>
+        """, height=0)
+
+    jours = st.session_state.sim_hour // 24
+    heure_j = st.session_state.sim_hour % 24
+    etat_txt = "▶️ en lecture" if st.session_state.running else "⏸️ en pause"
+    st.markdown(f"""
+    <div class="clock-banner">
+        <div class="clock-time">🕐 Jour {jours + 1} — {heure_j:02d}h00</div>
+        <div class="clock-sub">Heure simulée n°{st.session_state.sim_hour} · {etat_txt}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    df_map = fleet_state_at(st.session_state.sim_hour)
+    df_map["couleur_hex"] = df_map["risque"].apply(
+        lambda s: "#E0554F" if s >= 65 else "#E8A23D" if s >= 30 else "#49B586"
+    )
+    df_map["icon_data"] = df_map["couleur_hex"].apply(
+        lambda c: {"url": _ICON_CACHE[c], "width": 64, "height": 64, "anchorY": 58}
+    )
+
+    k1, k2, k3, k4 = st.columns(4)
     with k1: kpi("Normal", str((df_map["statut"] == "Normal").sum()), "🟢 transformateurs")
     with k2: kpi("Surveillance renforcée", str((df_map["statut"] == "Surveillance renforcée").sum()), "🟠 transformateurs")
     with k3: kpi("Critique", str((df_map["statut"] == "Critique").sum()), "🔴 transformateurs")
+    with k4: kpi("Pannes enregistrées", str(len(st.session_state.historique)), "depuis le début de la simulation")
 
     layer = pdk.Layer(
-        "ScatterplotLayer", data=df_map, get_position=["lon", "lat"],
-        get_fill_color="couleur", get_radius=350, pickable=True, get_line_color=[255, 255, 255], line_width_min_pixels=1,
+        "IconLayer", data=df_map, get_icon="icon_data",
+        get_position=["lon", "lat"], get_size=4, size_scale=16,
+        pickable=True,
     )
-    view_state = pdk.ViewState(latitude=base_lat, longitude=base_lon, zoom=10)
-    st.pydeck_chart(pdk.Deck(
-        layers=[layer], initial_view_state=view_state, map_style=None,
-        tooltip={"text": "{id}\nRisque : {risque}\nStatut : {statut}"},
-    ))
+    view_state = pdk.ViewState(
+        latitude=float(df_map["lat"].mean()), longitude=float(df_map["lon"].mean()), zoom=11.3, pitch=0,
+    )
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[layer], initial_view_state=view_state,
+            map_provider="carto", map_style="dark_matter",
+            tooltip={"text": "{id}\nRisque : {risque}\nStatut : {statut}"},
+        ),
+        use_container_width=True, height=560,
+    )
+
     st.dataframe(
         df_map[["id", "charge", "oil", "ambient", "humidity", "risque", "statut"]]
         .sort_values("risque", ascending=False),
         use_container_width=True, hide_index=True,
     )
+
+    st.subheader("Historique des pannes / alertes critiques")
+    ref("Journal cumulé au fil de la simulation")
+    if st.session_state.historique:
+        df_hist = pd.DataFrame(st.session_state.historique)
+        df_hist_cum = (
+            df_hist.groupby("heure_sim").size().reindex(
+                range(0, st.session_state.sim_hour + 1), fill_value=0
+            ).cumsum().reset_index()
+        )
+        df_hist_cum.columns = ["heure_sim", "pannes_cumulees"]
+        fig_h = go.Figure(go.Scatter(
+            x=df_hist_cum["heure_sim"], y=df_hist_cum["pannes_cumulees"],
+            mode="lines", line=dict(color="#E0554F", width=2), fill="tozeroy",
+            fillcolor="rgba(224,85,79,0.12)",
+        ))
+        fig_h.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            height=220, margin=dict(l=10, r=10, t=10, b=10),
+            xaxis={"title": "Heure simulée", "color": "#8B97AC", "gridcolor": "#1B2436"},
+            yaxis={"title": "Pannes cumulées", "color": "#8B97AC", "gridcolor": "#1B2436"},
+            font={"color": "#E9ECF2"},
+        )
+        st.plotly_chart(fig_h, use_container_width=True, config={"displayModeBar": False})
+
+        st.dataframe(
+            df_hist.sort_values("heure_sim", ascending=False).rename(columns={
+                "heure_sim": "Heure simulée", "id": "Transformateur",
+                "risque": "Indice de risque", "charge": "Charge (%)", "oil": "T° huile (°C)",
+            }),
+            use_container_width=True, hide_index=True, height=260,
+        )
+    else:
+        st.info("Aucune panne enregistrée pour l'instant. Cliquez sur ▶️ Lecture ou ⏭️ +1 heure pour avancer la simulation.")
 
 # ============================================================================
 # PAGE — DONNÉES RÉELLES (CSV)
