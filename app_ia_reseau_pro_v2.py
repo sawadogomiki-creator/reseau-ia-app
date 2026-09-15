@@ -1,5 +1,5 @@
 """
-Système intelligent de prédiction SAWADOGO
+Système intelligent de prédiction de défaillance des transformateurs de distribution
 --------------------------------------------------------------------------------------
 Version 3 — ajouts par rapport à la v2 :
   - Diagnostic de type de panne (surtension, sous-tension, court-circuit,
@@ -124,6 +124,16 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+def _rerun():
+    """Compatibilité entre les versions de Streamlit (st.rerun ou l'ancien
+    st.experimental_rerun). Un rerun côté serveur préserve st.session_state,
+    contrairement à un rechargement de page dans le navigateur."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
 
 
 def kpi(label, value, sub=""):
@@ -1056,14 +1066,10 @@ elif page == "🎬 Simulation automatique de panne":
 
     DURATION = 40  # pas de simulation
     if st.session_state.fault_running:
-        now = time.time()
-        if now - st.session_state.fault_last_tick >= (1.1 - speed / 11):
-            st.session_state.fault_t = min(DURATION, st.session_state.fault_t + 1)
-            st.session_state.fault_last_tick = now
         if st.session_state.fault_t < DURATION:
-            components.html(f"""
-            <script>setTimeout(function() {{ window.parent.location.reload(); }}, {int((1.1 - speed/11)*1000)});</script>
-            """, height=0)
+            time.sleep(max(0.12, 1.1 - speed / 11))
+            st.session_state.fault_t += 1
+            _rerun()
         else:
             st.session_state.fault_running = False
 
@@ -1225,13 +1231,9 @@ elif page == "🗺️ Carte, historique & prévision du parc":
         refresh_interval = st.slider("Vitesse (secondes réelles ≈ 1 heure simulée)", 1, 10, 3)
 
     if st.session_state.running:
-        now = time.time()
-        if now - st.session_state.last_tick >= refresh_interval:
-            advance_time(1)
-            st.session_state.last_tick = now
-        components.html(f"""
-        <script>setTimeout(function() {{ window.parent.location.reload(); }}, {int(refresh_interval * 1000)});</script>
-        """, height=0)
+        time.sleep(refresh_interval)
+        advance_time(1)
+        _rerun()
 
     jours = st.session_state.sim_hour // 24
     heure_j = st.session_state.sim_hour % 24
