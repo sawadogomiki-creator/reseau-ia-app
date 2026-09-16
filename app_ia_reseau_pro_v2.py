@@ -1,5 +1,5 @@
 """
-Système intelligent de prédiction de défaillance SAWADOGO
+Système intelligent de prédiction de défaillance des transformateurs de distribution
 --------------------------------------------------------------------------------------
 Version 3 — ajouts par rapport à la v2 :
   - Diagnostic de type de panne (surtension, sous-tension, court-circuit,
@@ -136,6 +136,15 @@ def _rerun():
         st.experimental_rerun()
 
 
+def _step_toward(current, target, max_step):
+    """Avance 'current' vers 'target' d'au plus 'max_step' — utilisé pour que
+    les curseurs produisent un effet progressif (rampe visible) plutôt qu'un
+    saut instantané à la valeur cible."""
+    if abs(target - current) <= max_step:
+        return target
+    return current + max_step * (1 if target > current else -1)
+
+
 def kpi(label, value, sub=""):
     st.markdown(f"""
     <div class="kpi-card">
@@ -263,6 +272,9 @@ FAULT_DIRECTIVES = {
                 "régulation ; signaler l'écart au poste source avant qu'il ne s'aggrave.",
         correct="Délester les charges sensibles, isoler temporairement le départ concerné "
                 "et faire intervenir une équipe pour recalibrer la régulation de tension.",
+        network=["Soulager le réseau : vérifier les postes voisins alimentés par la même ligne source.",
+                 "Vérifier les clients connectés sensibles (équipements électroniques) sur ce départ."],
+        short="surtension",
     ),
     "Sous-tension / creux de tension": dict(
         color="#4FA3D1",
@@ -270,6 +282,9 @@ FAULT_DIRECTIVES = {
                 "départ ; anticiper un renforcement si la chute de tension est récurrente.",
         correct="Réduire la charge sur la ligne concernée, contrôler les connexions "
                 "(bornes desserrées, cosses oxydées) et rétablir l'équilibrage des phases.",
+        network=["Soulager le réseau : délester une partie des charges en bout de ligne.",
+                 "Vérifier les clients connectés en aval, souvent les premiers touchés par la chute de tension."],
+        short="sous-tension",
     ),
     "Court-circuit / surcharge extrême": dict(
         color="#E0554F",
@@ -277,6 +292,9 @@ FAULT_DIRECTIVES = {
                 "vérifier périodiquement l'état des connexions pour éviter tout amorçage.",
         correct="Mettre hors tension immédiatement, consigner l'ouvrage, puis inspecter "
                 "les enroulements et les protections avant toute remise en service.",
+        network=["Soulager le réseau : délester les départs non prioritaires avant toute manœuvre.",
+                 "Vérifier les clients connectés en aval avant la remise sous tension."],
+        short="court-circuit",
     ),
     "Surchauffe ambiante": dict(
         color="#E8A23D",
@@ -284,6 +302,9 @@ FAULT_DIRECTIVES = {
                 "l'ensoleillement direct et limiter la charge aux heures les plus chaudes.",
         correct="Réduire temporairement la charge et forcer la ventilation si possible "
                 "jusqu'au retour de la température ambiante à un niveau normal.",
+        network=["Soulager le réseau aux heures les plus chaudes en décalant les grosses charges.",
+                 "Informer les clients concernés d'une possible coupure préventive de courte durée."],
+        short="surchauffe ambiante",
     ),
     "Surchauffe interne (refroidissement déficient)": dict(
         color="#E8734A",
@@ -291,6 +312,9 @@ FAULT_DIRECTIVES = {
                 "d'huile pour garantir une dissipation thermique correcte.",
         correct="Contrôler et déboucher le système de refroidissement, vérifier le niveau "
                 "et la qualité de l'huile, et réduire la charge en attendant l'intervention.",
+        network=["Soulager le réseau : réduire la charge sur ce poste en attendant l'intervention.",
+                 "Vérifier les clients connectés pour une éventuelle surconsommation anormale récente."],
+        short="surchauffe interne",
     ),
     "Humidité / infiltration": dict(
         color="#49A3B5",
@@ -298,6 +322,9 @@ FAULT_DIRECTIVES = {
                 "préventivement le gel de silice du respirateur avant la saison pluvieuse.",
         correct="Vérifier l'étanchéité, remplacer le gel de silice saturé et envisager un "
                 "séchage de l'huile si l'humidité interne est confirmée par analyse.",
+        network=["Vérifier les postes voisins pour un problème similaire (même épisode pluvieux).",
+                 "Planifier une tournée d'inspection avant la prochaine pluie annoncée."],
+        short="infiltration d'humidité",
     ),
     "Surcharge": dict(
         color="#E8A23D",
@@ -305,8 +332,22 @@ FAULT_DIRECTIVES = {
                 "un effacement ou une meilleure répartition des usages.",
         correct="Délester une partie de la charge vers un poste voisin ; si la surcharge "
                 "est récurrente, étudier un renforcement de puissance.",
+        network=["Soulager le réseau en répartissant la charge vers un poste voisin disponible.",
+                 "Vérifier les clients connectés récemment sur ce départ (nouveau raccordement)."],
+        short="surcharge",
     ),
 }
+
+
+def urgent_prognosis(fault_label, severity):
+    """Formule un pronostic opérationnel du type : « Risque de court-circuit à
+    venir : 40% dans environ 5h si rien n'est fait. » Estimation illustrative,
+    croissante avec la sévérité détectée — à remplacer par une vraie
+    probabilité de défaillance une fois le modèle entraîné disponible."""
+    short = FAULT_DIRECTIVES.get(fault_label, {}).get("short", fault_label.lower())
+    probability = round(35 + severity * 60)
+    hours = max(1, round(20 - severity * 15))
+    return f"⚠ Risque de {short} à venir : {probability}% dans environ {hours} h si rien n'est fait."
 
 
 def diagnose_fault(charge, oil, ambient, humidity, voltage, ttype=None):
@@ -847,8 +888,8 @@ st.sidebar.title("⚡ Système de prédiction")
 st.sidebar.caption("Transformateurs de distribution — Burkina Faso")
 page = st.sidebar.radio("Navigation", [
     "🏠 Vue d'ensemble",
-    "🖥️ Console opérateur",
-    "🎬 Simulation automatique de panne",
+    "🎛️ Partie 1 — Mode manuel (curseurs)",
+    "🎲 Partie 2 — Mode simulation aléatoire",
     "🏗️ Comparaison des types d'installation",
     "🗺️ Carte, historique & prévision du parc",
     "📄 Données réelles (CSV)",
@@ -893,7 +934,7 @@ if page == "🏠 Vue d'ensemble":
         c1, c2, c3, c4 = st.columns(4)
         with c1: kpi("Transformateurs surveillés", str(FLEET_SIZE), "3 types d'installation")
         with c2: kpi("Points de mesure", "5", "par transformateur, temps réel")
-        with c3: kpi("Types de panne détectés", "7", "voir Console opérateur")
+        with c3: kpi("Types de panne détectés", "7", "voir Partie 1 — Mode manuel")
         with c4: kpi("Horloge de simulation", f"h+{st.session_state.sim_hour}", "voir Carte du parc")
 
     st.write("")
@@ -949,8 +990,8 @@ if page == "🏠 Vue d'ensemble":
     <div class="section-note">
     Chaque mesure capteur traverse le prétraitement, le modèle d'IA, puis la couche
     applicative qui calcule l'indice de risque, identifie le <b>type de panne probable</b>
-    et propose une <b>directive corrective ciblée</b> (voir « Console opérateur » et
-    « Simulation automatique de panne »).
+    et propose une <b>directive corrective ciblée</b> (voir « Partie 1 — Mode manuel » et
+    « Partie 2 — Mode simulation aléatoire »).
     </div>
     """, unsafe_allow_html=True)
 
@@ -958,25 +999,24 @@ if page == "🏠 Vue d'ensemble":
     st.markdown("##### Comment naviguer ce tableau de bord")
     d1, d2, d3 = st.columns(3)
     with d1:
-        st.markdown("**🖥️ Console opérateur**")
-        st.caption("Réglez charge, courant et tension des 3 transformateurs ; la météo commune montre l'effet de leur environnement.")
+        st.markdown("**🎛️ Partie 1 — Mode manuel**")
+        st.caption("Réglez charge, courant et tension des 3 transformateurs ; la météo commune montre l'effet de leur environnement, avec une évolution progressive à chaque changement.")
     with d2:
-        st.markdown("**🎬 Simulation de panne**")
-        st.caption("6 scénarios rejouent l'augmentation progressive du risque jusqu'au niveau critique (surtension, court-circuit...).")
+        st.markdown("**🎲 Partie 2 — Mode aléatoire**")
+        st.caption("Choisissez un type de panne : le système simule seul son évolution progressive jusqu'au niveau critique.")
     with d3:
         st.markdown("**🗺️ Carte du parc**")
         st.caption("3 emplacements réels à Ouagadougou avec les obstacles alentour, pour préparer les interventions.")
 
 # ============================================================================
-# PAGE — CONSOLE OPÉRATEUR
+# PAGE — PARTIE 1 : MODE MANUEL (3 transformateurs, météo commune, curseurs
+# progressifs — chaque changement de curseur s'applique en douceur pour que
+# l'on voie l'impact réel se manifester, pas un saut instantané)
 # ============================================================================
-# ============================================================================
-# PAGE — CONSOLE OPÉRATEUR (3 transformateurs, météo commune)
-# ============================================================================
-elif page == "🖥️ Console opérateur":
-    st.title("Console opérateur — 3 transformateurs")
+elif page == "🎛️ Partie 1 — Mode manuel (curseurs)":
+    st.title("Partie 1 — Mode manuel : 3 transformateurs")
     ref("Sections 3.4 – 3.6")
-    st.caption("La météo (température ambiante et humidité) est commune aux 3 transformateurs — faites-la varier pour voir comment chacun réagit selon son environnement. Charge, courant et tension se règlent individuellement pour chaque transformateur.")
+    st.caption("La météo (température ambiante et humidité) est commune aux 3 transformateurs — faites-la varier pour voir comment chacun réagit selon son environnement. Charge, courant et tension se règlent individuellement pour chaque transformateur, et chaque changement se répercute progressivement (pas de saut instantané) pour bien voir l'impact réel.")
 
     st.markdown("##### Météo commune")
     mc1, mc2, mc3, mc4 = st.columns([1, 1, 1, 1])
@@ -987,12 +1027,23 @@ elif page == "🖥️ Console opérateur":
                            format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse", horizontal=True)
     if use_live_console:
         w_c = fetch_live_weather(12.3714, -1.5197)
-        amb_common, hum_common = w_c["temperature"], w_c["humidity"]
-        with mc2: st.metric("T° ambiante commune", f"{amb_common:.1f} °C")
-        with mc3: st.metric("Humidité commune", f"{hum_common:.0f} %")
+        amb_target, hum_target = w_c["temperature"], w_c["humidity"]
+        with mc2: st.metric("T° ambiante commune", f"{amb_target:.1f} °C")
+        with mc3: st.metric("Humidité commune", f"{hum_target:.0f} %")
     else:
-        with mc2: amb_common = st.slider("T° ambiante commune (°C)", 15, 48, 34)
-        with mc3: hum_common = st.slider("Humidité commune (%)", 10, 98, 30 if season == "seche" else 80)
+        with mc2: amb_target = st.slider("T° ambiante commune (°C)", 15, 48, 34)
+        with mc3: hum_target = st.slider("Humidité commune (%)", 10, 98, 30 if season == "seche" else 80)
+
+    # Application progressive : les valeurs affichées rattrapent doucement les
+    # valeurs cibles (curseurs) à chaque relecture, au lieu de sauter dessus —
+    # c'est ce qui rend l'impact d'un changement visible en train de se produire.
+    animating = False
+    amb_common = _step_toward(st.session_state.get("disp_amb_common", amb_target), amb_target, 1.2)
+    hum_common = _step_toward(st.session_state.get("disp_hum_common", hum_target), hum_target, 3.0)
+    st.session_state["disp_amb_common"] = amb_common
+    st.session_state["disp_hum_common"] = hum_common
+    if amb_common != amb_target or hum_common != hum_target:
+        animating = True
 
     st.write("")
     cols3 = st.columns(3)
@@ -1001,8 +1052,15 @@ elif page == "🖥️ Console opérateur":
         with cols3[i]:
             st.markdown(f"**{meta['icon']} {transfo_id} — {ttype}**")
             st.caption(FLEET_INFO[i]["lieu"])
-            charge_i = st.slider("Charge / courant (%)", 0, 160, 60, key=f"charge_{i}")
-            voltage_i = st.slider("Écart de tension (%)", -15, 15, 2, key=f"voltage_{i}")
+            charge_target = st.slider("Charge / courant (%)", 0, 160, 60, key=f"charge_{i}")
+            voltage_target = st.slider("Écart de tension (%)", -15, 15, 2, key=f"voltage_{i}")
+
+            charge_i = _step_toward(st.session_state.get(f"disp_charge_{i}", charge_target), charge_target, 4.0)
+            voltage_i = _step_toward(st.session_state.get(f"disp_voltage_{i}", voltage_target), voltage_target, 1.2)
+            st.session_state[f"disp_charge_{i}"] = charge_i
+            st.session_state[f"disp_voltage_{i}"] = voltage_i
+            if charge_i != charge_target or voltage_i != voltage_target:
+                animating = True
 
             ambient_i, humidity_i, oil_i = apply_type(amb_common, hum_common, charge_i, ttype)
             score_i, contribs_i = compute_risk(charge_i, oil_i, ambient_i, humidity_i, voltage_i, season)
@@ -1012,6 +1070,8 @@ elif page == "🖥️ Console opérateur":
             st.markdown(f"""
             <div class="hmi-panel" style="border-color:{color_i}55;">
                 <table style="width:100%;font-size:0.78rem;color:#DCE2EC;">
+                    <tr><td style="color:#8B97AC;">Charge / courant actuels</td><td style="text-align:right;">{charge_i:.0f} %</td></tr>
+                    <tr><td style="color:#8B97AC;">Tension actuelle</td><td style="text-align:right;">{voltage_i:+.1f} %</td></tr>
                     <tr><td style="color:#8B97AC;">T° ambiante réelle</td><td style="text-align:right;">{ambient_i:.1f} °C</td></tr>
                     <tr><td style="color:#8B97AC;">T° huile</td><td style="text-align:right;">{oil_i:.1f} °C</td></tr>
                     <tr><td style="color:#8B97AC;">Humidité réelle</td><td style="text-align:right;">{humidity_i:.0f} %</td></tr>
@@ -1026,19 +1086,18 @@ elif page == "🖥️ Console opérateur":
 
             if fault_i:
                 fd_i = FAULT_DIRECTIVES[fault_i]
-                delay_i, urgency_i = estimate_delay(score_i)
                 st.markdown(f"""
                 <div class="fault-card" style="border-left:3px solid {fd_i['color']};">
                     <span class="fault-tag" style="background:{fd_i['color']}22;color:{fd_i['color']};">⚠ {fault_i}</span>
-                    <div style="color:#8B97AC;font-size:0.72rem;margin-top:4px;">sévérité {sev_i*100:.0f}% · {urgency_i}</div>
+                    <div style="color:{fd_i['color']};font-size:0.82rem;font-weight:600;margin-top:6px;">{urgent_prognosis(fault_i, sev_i)}</div>
                     <div style="margin-top:8px;font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🛡️ Prévenir</div>
                     <div style="font-size:0.82rem;color:#DCE2EC;margin:2px 0 6px;">{fd_i['prevent']}</div>
                     <div style="font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔧 Corriger</div>
-                    <div style="font-size:0.82rem;color:#DCE2EC;margin-top:2px;">{fd_i['correct']}</div>
+                    <div style="font-size:0.82rem;color:#DCE2EC;margin:2px 0 6px;">{fd_i['correct']}</div>
+                    <div style="font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔌 Actions réseau</div>
+                    <div style="font-size:0.82rem;color:#DCE2EC;margin-top:2px;">• {fd_i['network'][0]}<br>• {fd_i['network'][1]}</div>
                 </div>
                 """, unsafe_allow_html=True)
-                if delay_i:
-                    st.caption(f"Délai estimé : {delay_i}")
             else:
                 st.markdown(f"""
                 <div class="fault-card" style="border-left:3px solid #49B586;">
@@ -1058,13 +1117,18 @@ elif page == "🖥️ Console opérateur":
     </div>
     """, unsafe_allow_html=True)
 
+    if animating:
+        time.sleep(0.15)
+        _rerun()
+
 # ============================================================================
-# PAGE — SIMULATION AUTOMATIQUE DE PANNE (6 scénarios)
+# PAGE — PARTIE 2 : MODE SIMULATION ALÉATOIRE (le système choisit et fait
+# évoluer seul le comportement de la panne choisie — 6 scénarios disponibles)
 # ============================================================================
-elif page == "🎬 Simulation automatique de panne":
-    st.title("Simulation automatique de panne")
+elif page == "🎲 Partie 2 — Mode simulation aléatoire":
+    st.title("Partie 2 — Mode simulation aléatoire")
     ref("Section 3.6 — 6 scénarios disponibles")
-    st.caption("Choisissez un type de défaut : la simulation rejoue son évolution de Normal à Critique, avec la directive corrective adaptée qui apparaît dès que la panne est identifiée.")
+    st.caption("Choisissez un type de défaut : le système simule seul son évolution progressive de Normal à Critique, avec le pronostic et les actions réseau qui apparaissent dès que la panne est identifiée.")
 
     if "fault_t" not in st.session_state:
         st.session_state.fault_t = 0
@@ -1106,6 +1170,16 @@ elif page == "🎬 Simulation automatique de panne":
     amb_base = 34  # ambiante de référence pour ces scénarios pédagogiques
     hum_base = 30
     vals = scn["fn"](p, amb_base, hum_base)
+    # petite variation aléatoire à chaque étape pour un comportement moins
+    # parfaitement lisse — cohérente d'une relecture à l'autre (seed = étape)
+    _noise_rng = np.random.default_rng(hash((scenario_name, st.session_state.fault_t)) % (2**31))
+    vals = dict(
+        charge=max(0, vals["charge"] + _noise_rng.normal(0, 1.5)),
+        oil=max(20, vals["oil"] + _noise_rng.normal(0, 1.0)),
+        ambient=vals["ambient"] + _noise_rng.normal(0, 0.6),
+        humidity=min(98, max(5, vals["humidity"] + _noise_rng.normal(0, 1.5))),
+        voltage=vals["voltage"] + _noise_rng.normal(0, 0.4),
+    )
     score, contribs = compute_risk(vals["charge"], vals["oil"], vals["ambient"], vals["humidity"], vals["voltage"])
     label, color = classify(score)
     fault_label, fault_sev, _ = diagnose_fault(vals["charge"], vals["oil"], vals["ambient"], vals["humidity"], vals["voltage"])
@@ -1129,9 +1203,11 @@ elif page == "🎬 Simulation automatique de panne":
             st.markdown(f"""
             <div class="fault-card" style="border-left:3px solid {fd['color']};">
                 <span class="fault-tag" style="background:{fd['color']}22;color:{fd['color']};">⚠ {fault_label}</span>
-                <span style="color:#8B97AC;font-size:0.76rem;margin-left:6px;">sévérité {fault_sev*100:.0f}%</span>
-                <div style="margin-top:8px;font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔧 Directive corrective</div>
-                <div style="font-size:0.86rem;color:#DCE2EC;margin-top:2px;">{fd['correct']}</div>
+                <div style="color:{fd['color']};font-size:0.84rem;font-weight:600;margin-top:6px;">{urgent_prognosis(fault_label, fault_sev)}</div>
+                <div style="margin-top:8px;font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔧 Corriger</div>
+                <div style="font-size:0.86rem;color:#DCE2EC;margin:2px 0 6px;">{fd['correct']}</div>
+                <div style="font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔌 Actions réseau</div>
+                <div style="font-size:0.86rem;color:#DCE2EC;margin-top:2px;">• {fd['network'][0]}<br>• {fd['network'][1]}</div>
             </div>
             """, unsafe_allow_html=True)
         else:
