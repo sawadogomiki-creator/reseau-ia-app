@@ -1,5 +1,5 @@
 """
-Système intelligent de prédiction de défaillance des transformateurs de distribution
+Système intelligent de prédiction de défaillance SAWADOGO
 --------------------------------------------------------------------------------------
 Version 3 — ajouts par rapport à la v2 :
   - Diagnostic de type de panne (surtension, sous-tension, court-circuit,
@@ -390,13 +390,6 @@ def trend_forecast(history_df, transfo_id, current_score, window=12):
     return f"≈ {hours_to_critical:.0f} h au rythme actuel (tendance sur l'historique)"
 
 
-PRESETS = {
-    "Fonctionnement normal — saison sèche": dict(charge=55, oil=58, ambient=33, humidity=22, voltage=2, season="seche"),
-    "Pic de chaleur": dict(charge=85, oil=88, ambient=43, humidity=18, voltage=3, season="seche"),
-    "Saison pluvieuse": dict(charge=65, oil=62, ambient=27, humidity=87, voltage=-2, season="pluvieuse"),
-    "Surcharge critique": dict(charge=138, oil=108, ambient=40, humidity=30, voltage=-9, season="seche"),
-}
-
 # ============================================================================
 # SCÉNARIOS DE SIMULATION AUTOMATIQUE DE PANNE (au moins 5 exigés — ici 6)
 # ============================================================================
@@ -665,6 +658,17 @@ def transformer_icon_data_uri(color):
     return f"data:image/svg+xml;base64,{b64}"
 
 
+def emoji_icon_data_uri(emoji, bg="#1B2436", border="#8B97AC"):
+    """Icône ronde générique (obstacles : arbre, bâtiment, barrage...) encodée
+    en SVG data-URI, réutilisable par pydeck comme pour les transformateurs."""
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+      <circle cx="24" cy="24" r="19" fill="{bg}" stroke="{border}" stroke-width="2"/>
+      <text x="24" y="31" font-size="20" text-anchor="middle">{emoji}</text>
+    </svg>"""
+    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{b64}"
+
+
 _ICON_CACHE = {
     "#E0554F": transformer_icon_data_uri("#E0554F"),
     "#E8A23D": transformer_icon_data_uri("#E8A23D"),
@@ -733,20 +737,27 @@ def weather_card(w):
 
 
 # ============================================================================
-# ÉTAT DU PARC — 5 transformateurs numérotés, typés et localisés
+# ÉTAT DU PARC — 3 transformateurs (un par type d'installation), numérotés,
+# localisés dans 3 quartiers réels de Ouagadougou, avec les obstacles
+# environnants utiles pour préparer une intervention (section 3.9)
 # ============================================================================
 
 FLEET_INFO = [
-    dict(id="TR-01", type="Cabine maçonnée", lieu="Centre-ville — quartier administratif",
-         lat=12.3686, lon=-1.5275),
-    dict(id="TR-02", type="Préfabriqué", lieu="Zone périurbaine — quartier résidentiel",
-         lat=12.3812, lon=-1.5033),
-    dict(id="TR-03", type="Haut de poteau", lieu="Zone rurale exposée — périphérie",
-         lat=12.3505, lon=-1.4890),
-    dict(id="TR-04", type="Préfabriqué", lieu="Zone industrielle",
-         lat=12.3960, lon=-1.5410),
-    dict(id="TR-05", type="Haut de poteau", lieu="Axe routier secondaire",
-         lat=12.3610, lon=-1.5560),
+    dict(id="TR-01", type="Cabine maçonnée", lieu="Gounghin — centre-ville dense",
+         lat=12.3672, lon=-1.5288,
+         obstacle_icon="🏢", obstacle_label="Bâtiments mitoyens",
+         obstacle_detail="Ruelle étroite, accès camion-nacelle limité : prévoir un véhicule léger pour l'intervention.",
+         obs_lat=12.3675, obs_lon=-1.5279),
+    dict(id="TR-02", type="Préfabriqué", lieu="Ouaga 2000 — zone périurbaine",
+         lat=12.3315, lon=-1.4791,
+         obstacle_icon="🌳", obstacle_label="Grand arbre (manguier)",
+         obstacle_detail="Branches proches de la cuve : élagage recommandé avant toute intervention avec nacelle.",
+         obs_lat=12.3318, obs_lon=-1.4785),
+    dict(id="TR-03", type="Haut de poteau", lieu="Tanghin — proximité du barrage n°3",
+         lat=12.4051, lon=-1.5140,
+         obstacle_icon="🌊", obstacle_label="Barrage n°3 (plan d'eau)",
+         obstacle_detail="Humidité ambiante localement plus élevée ; accès parfois boueux en saison des pluies.",
+         obs_lat=12.4044, obs_lon=-1.5152),
 ]
 FLEET_SIZE = len(FLEET_INFO)
 
@@ -761,7 +772,6 @@ if "state_history" not in st.session_state:
 if "last_tick" not in st.session_state:
     st.session_state.last_tick = time.time()
 if "fleet_base" not in st.session_state:
-    rng0 = np.random.default_rng(42)
     st.session_state.fleet_base = pd.DataFrame({
         "id": [f["id"] for f in FLEET_INFO],
         "type": [f["type"] for f in FLEET_INFO],
@@ -866,7 +876,7 @@ if page == "🏠 Vue d'ensemble":
                 Système intelligent de prédiction de défaillance
             </div>
             <div style="font-size:0.88rem;color:#8B97AC;margin-top:2px;">
-                Supervision de 5 transformateurs de distribution — Ouagadougou
+                Supervision de 3 transformateurs de distribution — Ouagadougou
                 <span class="ref-badge">Chapitre 3</span>
             </div>
         </div>
@@ -887,147 +897,166 @@ if page == "🏠 Vue d'ensemble":
         with c4: kpi("Horloge de simulation", f"h+{st.session_state.sim_hour}", "voir Carte du parc")
 
     st.write("")
-    st.markdown("##### État instantané du parc")
-    ref("Section 3.9 — snapshot à l'heure simulée actuelle")
-    df_snapshot = fleet_state_at(st.session_state.sim_hour)
-    snap_cols = st.columns(FLEET_SIZE)
-    for i, r in enumerate(df_snapshot.itertuples()):
+    st.markdown("##### Suivi en direct du parc")
+    ref("Horloge en temps réel — risques et pourcentages notifiés chaque seconde")
+    live_c1, live_c2 = st.columns([1, 3])
+    with live_c1:
+        live_on = st.checkbox("⏱️ Activer le suivi en direct", value=st.session_state.get("live_on", True), key="live_on")
+    with live_c2:
+        st.caption("Le compteur avance chaque seconde ; l'indice de risque de chaque transformateur est réévalué et affiché en direct (l'horloge de simulation avance d'une heure toutes les 4 secondes de suivi).")
+
+    if "live_seconds" not in st.session_state:
+        st.session_state.live_seconds = 0
+
+    df_live = fleet_state_at(st.session_state.sim_hour)
+    st.markdown(f"""
+    <div class="clock-banner">
+        <div class="clock-time">⏱ {st.session_state.live_seconds} s écoulées</div>
+        <div class="clock-sub">Horloge de simulation : h+{st.session_state.sim_hour} · {'🟢 suivi actif' if live_on else '⏸️ en pause'}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    live_cols = st.columns(FLEET_SIZE)
+    for i, r in enumerate(df_live.itertuples()):
         stlabel, stcolor = classify(r.risque)
         icon = TRANSFO_TYPES[r.type]["icon"]
-        with snap_cols[i]:
+        with live_cols[i]:
             st.markdown(f"""
             <div class="hmi-panel" style="text-align:center;border-color:{stcolor}55;">
-                <div style="font-family:monospace;font-size:0.78rem;color:#8B97AC;">{r.id}</div>
+                <div style="font-family:monospace;font-size:0.78rem;color:#8B97AC;">{r.id} · {r.lieu}</div>
                 <div style="font-size:1.5rem;margin:4px 0;">{icon}</div>
                 <div style="font-size:0.66rem;color:#8B97AC;">{r.type}</div>
-                <div style="font-family:monospace;font-weight:700;font-size:1.1rem;color:{stcolor};">{r.risque:.0f}</div>
+                <div style="font-family:monospace;font-weight:700;font-size:1.3rem;color:{stcolor};">{r.risque:.0f}%</div>
                 <div style="font-size:0.68rem;color:{stcolor};">{stlabel}</div>
             </div>
             """, unsafe_allow_html=True)
-    st.caption("Valeurs recalculées automatiquement à partir de l'horloge de simulation (page « Carte du parc »).")
+    st.caption("Section 3.9 — chaque notification recalcule l'indice à partir des mêmes capteurs simulés (charge, huile, ambiante, humidité, tension).")
+
+    if live_on:
+        time.sleep(1)
+        st.session_state.live_seconds += 1
+        if st.session_state.live_seconds % 4 == 0:
+            advance_time(1)
+        _rerun()
 
     st.write("")
-    col_a, col_b = st.columns([1.1, 1])
-    with col_a:
-        st.markdown("##### Architecture du système")
-        ref("Section 3.2")
-        st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
-        components.html(architecture_visual_html(), height=340, scrolling=False)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with col_b:
-        st.markdown("##### Pipeline de traitement")
-        ref("Section 3.4")
-        st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
-        components.html(pipeline_visual_html(), height=210, scrolling=False)
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="section-note">
-        Chaque mesure capteur traverse le prétraitement, le modèle d'IA, puis la couche
-        applicative qui calcule l'indice de risque, identifie le <b>type de panne probable</b>
-        et propose une <b>directive corrective ciblée</b> (voir « Console opérateur » et
-        « Simulation automatique de panne »).
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("##### Pipeline de traitement")
+    ref("Section 3.4")
+    st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
+    components.html(pipeline_visual_html(), height=210, scrolling=False)
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="section-note">
+    Chaque mesure capteur traverse le prétraitement, le modèle d'IA, puis la couche
+    applicative qui calcule l'indice de risque, identifie le <b>type de panne probable</b>
+    et propose une <b>directive corrective ciblée</b> (voir « Console opérateur » et
+    « Simulation automatique de panne »).
+    </div>
+    """, unsafe_allow_html=True)
 
     st.write("")
     st.markdown("##### Comment naviguer ce tableau de bord")
     d1, d2, d3 = st.columns(3)
     with d1:
         st.markdown("**🖥️ Console opérateur**")
-        st.caption("Réglez les capteurs : diagnostic du type de panne et directive pour la corriger ou l'éviter.")
+        st.caption("Réglez charge, courant et tension des 3 transformateurs ; la météo commune montre l'effet de leur environnement.")
     with d2:
         st.markdown("**🎬 Simulation de panne**")
-        st.caption("6 scénarios rejouent l'évolution Normal → Critique d'un défaut précis (surtension, court-circuit...).")
+        st.caption("6 scénarios rejouent l'augmentation progressive du risque jusqu'au niveau critique (surtension, court-circuit...).")
     with d3:
-        st.markdown("**🏗️ Comparaison des types**")
-        st.caption("Cabine maçonnée vs préfabriqué vs haut de poteau, sous les mêmes conditions.")
+        st.markdown("**🗺️ Carte du parc**")
+        st.caption("3 emplacements réels à Ouagadougou avec les obstacles alentour, pour préparer les interventions.")
 
 # ============================================================================
 # PAGE — CONSOLE OPÉRATEUR
 # ============================================================================
+# ============================================================================
+# PAGE — CONSOLE OPÉRATEUR (3 transformateurs, météo commune)
+# ============================================================================
 elif page == "🖥️ Console opérateur":
-    st.title("Console opérateur — Transformateur")
+    st.title("Console opérateur — 3 transformateurs")
     ref("Sections 3.4 – 3.6")
-    st.caption("Réglez les capteurs pour explorer le comportement du système : diagnostic du type de panne et directive pour la corriger ou l'empêcher d'arriver.")
+    st.caption("La météo (température ambiante et humidité) est commune aux 3 transformateurs — faites-la varier pour voir comment chacun réagit selon son environnement. Charge, courant et tension se règlent individuellement pour chaque transformateur.")
 
-    st.markdown("##### Réglage des capteurs")
-    sc1, sc2, sc3 = st.columns([1.2, 1, 1])
-    with sc1:
-        preset_name = st.selectbox("Scénario préconstruit", ["— Réglage manuel —"] + list(PRESETS.keys()))
-    with sc2:
-        defaults = PRESETS.get(preset_name, dict(charge=60, oil=58, ambient=33, humidity=22, voltage=2, season="seche"))
+    st.markdown("##### Météo commune")
+    mc1, mc2, mc3, mc4 = st.columns([1, 1, 1, 1])
+    with mc1:
+        use_live_console = st.checkbox("Utiliser la météo en direct", value=True, key="console_live")
+    with mc4:
         season = st.radio("Saison", ["seche", "pluvieuse"],
-                           format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse",
-                           index=0 if defaults["season"] == "seche" else 1, horizontal=True)
-    with sc3:
-        ttype = st.selectbox("Type d'installation", list(TRANSFO_TYPES.keys()))
-
-    s1, s2, s3, s4, s5 = st.columns(5)
-    with s1: charge = st.slider("Charge (%)", 0, 150, defaults["charge"])
-    with s2: oil = st.slider("T° huile (°C)", 30, 120, defaults["oil"])
-    with s3: ambient = st.slider("T° ambiante (°C)", 15, 45, defaults["ambient"])
-    with s4: humidity = st.slider("Humidité (%)", 10, 95, defaults["humidity"])
-    with s5: voltage = st.slider("Écart tension (%)", -15, 15, defaults["voltage"])
-
-    score, contribs = compute_risk(charge, oil, ambient, humidity, voltage, season)
-    label, color = classify(score)
-    fault_label, fault_sev, fault_normal_text = diagnose_fault(charge, oil, ambient, humidity, voltage, ttype)
-    v_display = {
-        "Charge": f"{charge} %", "Température huile": f"{oil} °C",
-        "Température ambiante": f"{ambient} °C", "Humidité": f"{humidity} %",
-        "Écart de tension": f"{voltage:+d} %",
-    }
+                           format_func=lambda s: "Sèche" if s == "seche" else "Pluvieuse", horizontal=True)
+    if use_live_console:
+        w_c = fetch_live_weather(12.3714, -1.5197)
+        amb_common, hum_common = w_c["temperature"], w_c["humidity"]
+        with mc2: st.metric("T° ambiante commune", f"{amb_common:.1f} °C")
+        with mc3: st.metric("Humidité commune", f"{hum_common:.0f} %")
+    else:
+        with mc2: amb_common = st.slider("T° ambiante commune (°C)", 15, 48, 34)
+        with mc3: hum_common = st.slider("Humidité commune (%)", 10, 98, 30 if season == "seche" else 80)
 
     st.write("")
-    st.markdown('<div class="hmi-frame">', unsafe_allow_html=True)
-    st.markdown('<div class="hmi-title">▣ Schéma de supervision — mesures en temps réel</div>', unsafe_allow_html=True)
-    components.html(transformer_hmi_svg(charge, oil, ambient, humidity, voltage, label, color), height=380, scrolling=False)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.caption("🟢 Normal · 🟠 Surveillance renforcée · 🔴 Critique — chaque encadré est coloré selon le seuil propre à cette mesure ; la cuve et le statut global suivent l'indice de risque combiné (section 3.6).")
+    cols3 = st.columns(3)
+    for i, (ttype, meta) in enumerate(TRANSFO_TYPES.items()):
+        transfo_id = FLEET_INFO[i]["id"]
+        with cols3[i]:
+            st.markdown(f"**{meta['icon']} {transfo_id} — {ttype}**")
+            st.caption(FLEET_INFO[i]["lieu"])
+            charge_i = st.slider("Charge / courant (%)", 0, 160, 60, key=f"charge_{i}")
+            voltage_i = st.slider("Écart de tension (%)", -15, 15, 2, key=f"voltage_{i}")
+
+            ambient_i, humidity_i, oil_i = apply_type(amb_common, hum_common, charge_i, ttype)
+            score_i, contribs_i = compute_risk(charge_i, oil_i, ambient_i, humidity_i, voltage_i, season)
+            label_i, color_i = classify(score_i)
+            fault_i, sev_i, normal_txt_i = diagnose_fault(charge_i, oil_i, ambient_i, humidity_i, voltage_i, ttype)
+
+            st.markdown(f"""
+            <div class="hmi-panel" style="border-color:{color_i}55;">
+                <table style="width:100%;font-size:0.78rem;color:#DCE2EC;">
+                    <tr><td style="color:#8B97AC;">T° ambiante réelle</td><td style="text-align:right;">{ambient_i:.1f} °C</td></tr>
+                    <tr><td style="color:#8B97AC;">T° huile</td><td style="text-align:right;">{oil_i:.1f} °C</td></tr>
+                    <tr><td style="color:#8B97AC;">Humidité réelle</td><td style="text-align:right;">{humidity_i:.0f} %</td></tr>
+                </table>
+            </div>
+            """, unsafe_allow_html=True)
+            st.plotly_chart(plotly_gauge(score_i, color_i), use_container_width=True, config={"displayModeBar": False}, key=f"gauge_{i}")
+            st.markdown(f"""
+            <div style="padding:8px 14px;border-radius:8px;background:{color_i}22;color:{color_i};
+                        font-weight:700;text-align:center;margin-bottom:8px;">{label_i} — {score_i:.0f}/100</div>
+            """, unsafe_allow_html=True)
+
+            if fault_i:
+                fd_i = FAULT_DIRECTIVES[fault_i]
+                delay_i, urgency_i = estimate_delay(score_i)
+                st.markdown(f"""
+                <div class="fault-card" style="border-left:3px solid {fd_i['color']};">
+                    <span class="fault-tag" style="background:{fd_i['color']}22;color:{fd_i['color']};">⚠ {fault_i}</span>
+                    <div style="color:#8B97AC;font-size:0.72rem;margin-top:4px;">sévérité {sev_i*100:.0f}% · {urgency_i}</div>
+                    <div style="margin-top:8px;font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🛡️ Prévenir</div>
+                    <div style="font-size:0.82rem;color:#DCE2EC;margin:2px 0 6px;">{fd_i['prevent']}</div>
+                    <div style="font-size:0.68rem;color:#8B97AC;text-transform:uppercase;">🔧 Corriger</div>
+                    <div style="font-size:0.82rem;color:#DCE2EC;margin-top:2px;">{fd_i['correct']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if delay_i:
+                    st.caption(f"Délai estimé : {delay_i}")
+            else:
+                st.markdown(f"""
+                <div class="fault-card" style="border-left:3px solid #49B586;">
+                    <span class="fault-tag" style="background:#49B58622;color:#49B586;">✓ Normal</span>
+                    <div style="font-size:0.8rem;color:#DCE2EC;margin-top:6px;">{normal_txt_i}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            st.caption(meta["note"])
 
     st.write("")
-    col_interp, col_detail = st.columns([1.1, 1])
-    with col_interp:
-        st.markdown("##### Interprétation en langage clair")
-        st.markdown(f'<div class="hmi-interpret">{explain(v_display, contribs, season)}</div>', unsafe_allow_html=True)
-
-        st.write("")
-        if fault_label:
-            fd = FAULT_DIRECTIVES[fault_label]
-            delay, urgency = estimate_delay(score)
-            st.markdown(f"""
-            <div class="fault-card" style="border-left:3px solid {fd['color']};">
-                <span class="fault-tag" style="background:{fd['color']}22;color:{fd['color']};">⚠ {fault_label}</span>
-                <span style="color:#8B97AC;font-size:0.78rem;margin-left:8px;">sévérité {fault_sev*100:.0f}% · {urgency}</span>
-                <div style="margin-top:10px;font-size:0.7rem;color:#8B97AC;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Pour empêcher que la panne n'arrive</div>
-                <div style="font-size:0.9rem;color:#DCE2EC;margin:4px 0 10px;">{fd['prevent']}</div>
-                <div style="font-size:0.7rem;color:#8B97AC;text-transform:uppercase;letter-spacing:0.05em;">🔧 Pour corriger la situation actuelle</div>
-                <div style="font-size:0.9rem;color:#DCE2EC;margin-top:4px;">{fd['correct']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-            if delay:
-                st.caption(f"Délai estimé avant défaillance si la tendance se maintient : {delay}. Estimation illustrative — à affiner avec une analyse de durée de vie résiduelle sur données réelles (chapitre 2).")
-        else:
-            st.markdown(f"""
-            <div class="fault-card" style="border-left:3px solid #49B586;">
-                <span class="fault-tag" style="background:#49B58622;color:#49B586;">✓ Aucune panne détectée</span>
-                <div style="font-size:0.88rem;color:#DCE2EC;margin-top:8px;">{fault_normal_text}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.write("")
-        g1, g2 = st.columns([1, 1])
-        with g1:
-            st.plotly_chart(plotly_gauge(score, color), use_container_width=True, config={"displayModeBar": False})
-        with g2:
-            st.markdown(f"""
-            <div style="padding:12px 16px;border-radius:8px;background:{color}22;color:{color};
-                        font-weight:700;text-align:center;margin-top:36px;">{label}</div>
-            """, unsafe_allow_html=True)
-            st.caption(f"Type d'installation : {ttype}. {TRANSFO_TYPES[ttype]['note']}")
-    with col_detail:
-        st.markdown("##### Poids de chaque facteur dans l'indice")
-        st.plotly_chart(plotly_factors(contribs, v_display), use_container_width=True, config={"displayModeBar": False})
+    st.markdown("""
+    <div class="section-note">
+    À météo commune identique, chaque transformateur ressent une température et une humidité
+    différentes selon son environnement (cabine maçonnée = amortie mais mal ventilée, haut de
+    poteau = pleinement exposé mais mieux refroidi par l'air libre) — c'est ce qui explique que
+    leurs indices de risque divergent même sous la même charge et la même tension.
+    </div>
+    """, unsafe_allow_html=True)
 
 # ============================================================================
 # PAGE — SIMULATION AUTOMATIQUE DE PANNE (6 scénarios)
@@ -1252,6 +1281,9 @@ elif page == "🗺️ Carte, historique & prévision du parc":
     df_map["icon_data"] = df_map["couleur_hex"].apply(
         lambda c: {"url": _ICON_CACHE[c], "width": 64, "height": 64, "anchorY": 58}
     )
+    df_map["tooltip_text"] = df_map.apply(
+        lambda r: f"{r['id']} — {r['type']}\n{r['lieu']}\nRisque : {r['risque']} ({r['statut']})", axis=1
+    )
 
     k1, k2, k3, k4 = st.columns(4)
     with k1: kpi("Normal", str((df_map["statut"] == "Normal").sum()), "🟢 transformateurs")
@@ -1259,38 +1291,59 @@ elif page == "🗺️ Carte, historique & prévision du parc":
     with k3: kpi("Critique", str((df_map["statut"] == "Critique").sum()), "🔴 transformateurs")
     with k4: kpi("Pannes enregistrées", str(len(st.session_state.historique)), "depuis le début de la simulation")
 
+    df_obstacles = pd.DataFrame([
+        dict(id=f["id"], lat=f["obs_lat"], lon=f["obs_lon"], icon=f["obstacle_icon"],
+             label=f["obstacle_label"], detail=f["obstacle_detail"])
+        for f in FLEET_INFO
+    ])
+    _obst_icon_cache = {icon: emoji_icon_data_uri(icon) for icon in df_obstacles["icon"].unique()}
+    df_obstacles["icon_data"] = df_obstacles["icon"].apply(
+        lambda c: {"url": _obst_icon_cache[c], "width": 48, "height": 48, "anchorY": 44}
+    )
+    df_obstacles["tooltip_text"] = df_obstacles.apply(
+        lambda r: f"{r['icon']} {r['label']} (près de {r['id']})\n{r['detail']}", axis=1
+    )
+
     layer = pdk.Layer(
         "IconLayer", data=df_map, get_icon="icon_data",
         get_position=["lon", "lat"], get_size=4, size_scale=16,
         pickable=True,
     )
+    obstacle_layer = pdk.Layer(
+        "IconLayer", data=df_obstacles, get_icon="icon_data",
+        get_position=["lon", "lat"], get_size=3, size_scale=14,
+        pickable=True,
+    )
     view_state = pdk.ViewState(
-        latitude=float(df_map["lat"].mean()), longitude=float(df_map["lon"].mean()), zoom=11.3, pitch=0,
+        latitude=float(df_map["lat"].mean()), longitude=float(df_map["lon"].mean()), zoom=11.2, pitch=0,
     )
     st.pydeck_chart(
         pdk.Deck(
-            layers=[layer], initial_view_state=view_state,
+            layers=[obstacle_layer, layer], initial_view_state=view_state,
             map_provider="carto", map_style="dark_matter",
-            tooltip={"text": "{id} — {type}\n{lieu}\nRisque : {risque}\nStatut : {statut}"},
+            tooltip={"text": "{tooltip_text}"},
         ),
         use_container_width=True, height=520,
     )
+    st.caption("⚡ Icônes colorées = transformateurs (couleur = statut de risque) · icônes rondes = obstacles à proximité (🏢 bâtiments, 🌳 arbre, 🌊 barrage) utiles pour préparer une intervention.")
 
     hist_df = pd.DataFrame(st.session_state.state_history) if st.session_state.state_history else pd.DataFrame(columns=["heure_sim", "id", "risque"])
     df_map["delai_estime"] = df_map.apply(
         lambda r: (trend_forecast(hist_df, r["id"], r["risque"]) or (estimate_delay(r["risque"])[0] or "—")), axis=1
     )
     df_map["numero"] = df_map["id"]
+    obst_by_id = {f["id"]: f"{f['obstacle_icon']} {f['obstacle_label']} — {f['obstacle_detail']}" for f in FLEET_INFO}
+    df_map["obstacles"] = df_map["id"].map(obst_by_id)
 
-    st.markdown("##### Fiche par transformateur — numéro, type, localisation, risque")
+    st.markdown("##### Fiche par transformateur — numéro, type, localisation, risque, obstacles")
     st.dataframe(
-        df_map[["numero", "type", "lieu", "charge", "oil", "ambient", "humidity", "risque", "statut", "delai_estime"]]
+        df_map[["numero", "type", "lieu", "charge", "oil", "ambient", "humidity", "risque", "statut", "delai_estime", "obstacles"]]
         .sort_values("risque", ascending=False)
         .rename(columns={
             "numero": "N°", "type": "Type d'installation", "lieu": "Localisation",
             "charge": "Charge (%)", "oil": "T° huile (°C)", "ambient": "T° ambiante (°C)",
             "humidity": "Humidité (%)", "risque": "Indice de risque", "statut": "Statut",
-            "delai_estime": "Délai / tendance avant défaillance",
+            "delai_estime": "Délai / tendance avant défaillance", "obstacles": "Obstacle à proximité",
         }),
         use_container_width=True, hide_index=True,
     )
