@@ -8,7 +8,7 @@ import plotly.express as px
 # Configuration de la page
 st.set_page_config(page_title="IA Réseau Pro", page_icon="⚡", layout="wide")
 
-st.title("⚡ Système IA de Prédiction des Défaillances Réseau")
+st.title("⚡ Système IA de Prédiction SAWADOGO")
 st.markdown("Ce système utilise un modèle avancé **XGBoost** entraîné sur des lois de dégradation physique pour évaluer le risque de panne en temps réel.")
 
 # 1. Chargement sécurisé du modèle XGBoost
