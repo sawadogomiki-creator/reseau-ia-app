@@ -278,6 +278,7 @@ RISK_BANDS = [
 ]
 
 SECTIONS = [
+    "🏠 Tableau de bord",
     "🖐️ Mode manuel",
     "🎲 Simulation de pannes",
     "📋 État des transformateurs",
@@ -409,6 +410,196 @@ def _heuristic_risk(f: dict, season_code: int):
     return float(
         np.clip(total, 0, 100)
     )
+
+
+# ============================================================================
+# PRIORISATION OPÉRATIONNELLE
+# ============================================================================
+# Ces paramètres décrivent uniquement la criticité opérationnelle du prototype.
+# Ils ne remplacent pas une criticité métier SONABEL validée sur le terrain.
+
+CRITICALITY = {
+    "TR-01": {"criticite": 0.45, "acces": 0.95, "impact_reseau": 0.70},
+    "TR-02": {"criticite": 0.65, "acces": 0.60, "impact_reseau": 0.85},
+    "TR-03": {"criticite": 0.85, "acces": 0.35, "impact_reseau": 0.75},
+}
+
+def transformer_priority(t, risk):
+    """Calcule une priorité d'intervention indicative pour le prototype."""
+    c = CRITICALITY.get(
+        t["nom"],
+        {"criticite": 0.50, "acces": 0.50, "impact_reseau": 0.50},
+    )
+    # Risque = moteur principal ; criticité réseau et accessibilité modulent la priorité.
+    raw = (
+        0.60 * float(risk)
+        + 100 * 0.20 * c["criticite"]
+        + 100 * 0.15 * c["impact_reseau"]
+        + 100 * 0.05 * (1 - c["acces"])
+    )
+    raw = float(np.clip(raw, 0, 100))
+
+    if raw >= 80:
+        return "P1 — Intervention immédiate", raw
+    if raw >= 65:
+        return "P2 — Intervention prioritaire", raw
+    if raw >= 45:
+        return "P3 — Surveillance renforcée", raw
+    return "P4 — Surveillance normale", raw
+
+
+def local_risk_sensitivity(features, ttype):
+    """
+    Explication locale légère et robuste.
+    Si XGBoost est disponible, on mesure l'effet d'une petite variation
+    de chaque variable. Sinon, on expose les composantes de l'heuristique.
+    Ce n'est PAS une valeur SHAP.
+    """
+    feature_defs = [
+        ("charge", "Charge relative", 0.05),
+        ("oil_temp", "Température huile", 2.0),
+        ("ambient", "Température ambiante", 2.0),
+        ("humidity", "Humidité", 5.0),
+        ("voltage", "Tension", 0.02),
+    ]
+
+    season_map = {
+        "Saison sèche fraîche": 0,
+        "Saison sèche chaude": 1,
+        "Harmattan": 2,
+        "Saison des pluies": 3,
+    }
+    season_code = season_map.get(
+        features.get("season_label", "Saison sèche chaude"), 1
+    )
+
+    if MODEL is not None:
+        try:
+            base_x = pd.DataFrame([{
+                "charge": features["charge"],
+                "oil": features["oil_temp"],
+                "ambient": features["ambient"],
+                "humidity": features["humidity"],
+                "voltage": features["voltage"],
+                "season": season_code,
+            }])
+            base = float(MODEL.predict_proba(base_x)[0][1] * 100)
+
+            rows = []
+            for key, label, delta in feature_defs:
+                plus = dict(features)
+                minus = dict(features)
+                plus[key] = float(plus[key]) + delta
+                minus[key] = float(minus[key]) - delta
+
+                def model_value(f):
+                    x = pd.DataFrame([{
+                        "charge": f["charge"],
+                        "oil": f["oil_temp"],
+                        "ambient": f["ambient"],
+                        "humidity": f["humidity"],
+                        "voltage": f["voltage"],
+                        "season": season_code,
+                    }])
+                    return float(MODEL.predict_proba(x)[0][1] * 100)
+
+                sensitivity = (
+                    model_value(plus) - model_value(minus)
+                ) / 2.0
+
+                rows.append({
+                    "Variable": label,
+                    "Effet local (pts)": round(sensitivity, 2),
+                    "Lecture": (
+                        "augmente le risque"
+                        if sensitivity > 0.05
+                        else "réduit le risque"
+                        if sensitivity < -0.05
+                        else "effet faible"
+                    ),
+                })
+
+            df = pd.DataFrame(rows)
+            df["Valeur actuelle"] = [
+                round(float(features[k]), 3)
+                for k, _, _ in feature_defs
+            ]
+            df.attrs["source"] = "XGBoost — sensibilité locale"
+            df.attrs["base"] = base
+            return df
+        except Exception:
+            pass
+
+    # Fallback explicable : composantes de l'heuristique.
+    values = [
+        max(0, features["charge"] - 0.8) * 55,
+        max(0, features["oil_temp"] - 65) * 1.6,
+        max(0, features["ambient"] - 32) * 1.2,
+        max(0, features["humidity"] - 60) * 0.5,
+        abs(features["voltage"] - 1.0) * 60,
+    ]
+    labels = [x[1] for x in feature_defs]
+    vals = [features[x[0]] for x in feature_defs]
+    df = pd.DataFrame({
+        "Variable": labels,
+        "Effet local (pts)": np.round(values, 2),
+        "Valeur actuelle": np.round(vals, 3),
+        "Lecture": [
+            "contribue au risque" if v > 0.05 else "effet faible"
+            for v in values
+        ],
+    })
+    df.attrs["source"] = "Heuristique — composantes du risque"
+    return df
+
+
+def build_intervention_report():
+    """Construit un rapport texte exportable à partir du dernier état."""
+    now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    lines = [
+        "RAPPORT DE SURVEILLANCE — IA RÉSEAU PRO / PARC SONABEL",
+        f"Généré le : {now}",
+        "",
+        "IMPORTANT : prototype de démonstration. Les priorités et tendances",
+        "doivent être validées avant tout usage opérationnel.",
+        "",
+    ]
+
+    for t in TRANSFORMERS:
+        status = st.session_state.last_status[t["id"]]
+        risk = float(status["risk"])
+        priority, priority_score = transformer_priority(t, risk)
+        features = status.get("features", {})
+
+        lines += [
+            f"{t['nom']} — {t['type']} — {t['quartier']}",
+            f"Risque : {risk:.1f} % | Statut : {status['status']}",
+            f"Tendance : {status['trend_cat']} ({status['trend']:+.2f} pt/min)",
+            f"Priorité indicative : {priority} ({priority_score:.1f}/100)",
+            f"Source : {status['source']}",
+            f"Panne simulée : {status.get('failure') or 'Aucune'}",
+        ]
+
+        if features:
+            lines += [
+                f"Charge : {features.get('charge', 0):.2f}",
+                f"Température huile : {features.get('oil_temp', 0):.1f} °C",
+                f"Température ambiante : {features.get('ambient', 0):.1f} °C",
+                f"Humidité : {features.get('humidity', 0):.1f} %",
+                f"Tension : {features.get('voltage', 0):.3f} p.u.",
+            ]
+
+        if status.get("failure"):
+            directives = FAILURE_MODES.get(
+                status["failure"], {}
+            ).get("directives", [])
+            lines.append("Directives associées :")
+            lines.extend([f"- {d}" for d in directives])
+
+        lines.append("")
+
+    return "\n".join(lines)
+
 
 # ============================================================================
 # ÉTAT DE SESSION
@@ -877,9 +1068,9 @@ def prognosis_text(
     )
 
     return (
-        f"Risque de {label.lower()} à venir : "
-        f"{min(90, risk_pct + slope * 30):.0f} % "
-        f"dans {delay} si rien n'est fait."
+        f"Extrapolation : le seuil de 90 % pourrait être atteint "
+        f"dans {delay} si la pente actuelle reste inchangée. "
+        f"Ce n'est pas une estimation statistique du temps réel avant panne."
     )
 
 # ============================================================================
@@ -1219,10 +1410,172 @@ st.divider()
 section = st.session_state.section
 
 # ============================================================================
+# SECTION 0 — TABLEAU DE BORD
+# ============================================================================
+
+if section == "🏠 Tableau de bord":
+
+    st.subheader("🏠 Vue opérationnelle du parc")
+    st.caption(
+        "Cette vue synthétise le dernier état enregistré. "
+        "La priorité est indicative et doit être calibrée avec les données "
+        "réelles, la criticité des départs et les procédures d'exploitation."
+    )
+
+    rows = []
+    for t in TRANSFORMERS:
+        status = st.session_state.last_status[t["id"]]
+        priority, priority_score = transformer_priority(
+            t, status["risk"]
+        )
+        rows.append({
+            "Transformateur": t["nom"],
+            "Quartier": t["quartier"],
+            "Risque (%)": round(status["risk"], 1),
+            "Statut": f"{status['emoji']} {status['status']}",
+            "Tendance": status["trend_cat"],
+            "Priorité": priority,
+            "Score priorité": round(priority_score, 1),
+            "Source": status["source"],
+        })
+
+    df_dash = pd.DataFrame(rows)
+
+    k1, k2, k3, k4 = st.columns(4)
+    avg_risk = float(df_dash["Risque (%)"].mean()) if len(df_dash) else 0
+    high_count = int((df_dash["Risque (%)"] >= 65).sum())
+    active_failures = sum(
+        1 for t in TRANSFORMERS
+        if st.session_state.last_status[t["id"]].get("failure")
+    )
+
+    k1.metric("Transformateurs suivis", len(TRANSFORMERS))
+    k2.metric("Risque moyen", f"{avg_risk:.1f} %")
+    k3.metric("Risque élevé", high_count)
+    k4.metric("Pannes simulées actives", active_failures)
+
+    st.dataframe(
+        df_dash.sort_values(
+            ["Score priorité", "Risque (%)"],
+            ascending=False,
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.markdown("### 🚨 Alertes prioritaires")
+
+    alerts = df_dash.sort_values(
+        "Score priorité", ascending=False
+    ).head(3)
+
+    for _, row in alerts.iterrows():
+        if row["Score priorité"] >= 65:
+            st.error(
+                f"**{row['Transformateur']} — {row['Priorité']}** | "
+                f"Risque {row['Risque (%)']:.1f} % | "
+                f"{row['Tendance']}"
+            )
+        elif row["Score priorité"] >= 45:
+            st.warning(
+                f"**{row['Transformateur']} — {row['Priorité']}** | "
+                f"Risque {row['Risque (%)']:.1f} % | "
+                f"{row['Tendance']}"
+            )
+        else:
+            st.info(
+                f"**{row['Transformateur']} — {row['Priorité']}** | "
+                f"Risque {row['Risque (%)']:.1f} % | "
+                f"{row['Tendance']}"
+            )
+
+    st.markdown("### 📈 Tendances du parc")
+
+    history_rows = []
+    for t in TRANSFORMERS:
+        for point in list(st.session_state.history[t["id"]]):
+            history_rows.append({
+                "Temps": point["t"],
+                "Transformateur": t["nom"],
+                "Risque (%)": point["risk"],
+                "Température huile (°C)": point.get("oil_temp"),
+                "Charge": point.get("charge"),
+            })
+
+    if history_rows:
+        df_hist = pd.DataFrame(history_rows)
+        fig = px.line(
+            df_hist,
+            x="Temps",
+            y="Risque (%)",
+            color="Transformateur",
+            title="Évolution du risque",
+        )
+        fig.update_yaxes(range=[0, 100])
+        fig.add_hline(y=50, line_dash="dash")
+        fig.add_hline(y=65, line_dash="dash")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption(
+            "Les courbes représentent les valeurs enregistrées par "
+            "l'application, et non une mesure SCADA temps réel."
+        )
+    else:
+        st.info(
+            "Lancez le mode manuel ou la simulation pour alimenter "
+            "l'historique."
+        )
+
+    st.markdown("### 🧠 Explication du risque")
+
+    selected_name = st.selectbox(
+        "Transformateur à analyser",
+        [t["nom"] for t in TRANSFORMERS],
+        key="dashboard_explain_transformer",
+    )
+    selected = next(
+        t for t in TRANSFORMERS if t["nom"] == selected_name
+    )
+    selected_status = st.session_state.last_status[selected["id"]]
+    features = selected_status.get("features", {})
+
+    if features:
+        explain_df = local_risk_sensitivity(
+            features,
+            selected["type"],
+        )
+        st.caption(
+            f"Source : {explain_df.attrs.get('source', 'analyse locale')}. "
+            "Une sensibilité locale n'est pas une causalité."
+        )
+        st.dataframe(
+            explain_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "Aucune mesure récente pour ce transformateur."
+        )
+
+    st.markdown("### 📄 Rapport d'intervention")
+
+    report = build_intervention_report()
+    st.download_button(
+        "⬇️ Générer le rapport de surveillance",
+        data=report,
+        file_name=(
+            f"rapport_parc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        ),
+        mime="text/plain",
+        use_container_width=True,
+    )
+
+# ============================================================================
 # SECTION 1 — MODE MANUEL
 # ============================================================================
 
-if section == "🖐️ Mode manuel":
+elif section == "🖐️ Mode manuel":
 
     st.subheader(
         "Mode manuel — paramètres électriques"
@@ -1354,6 +1707,29 @@ if section == "🖐️ Mode manuel":
                 delta=f"{slope:+.2f} pts/min",
             )
 
+            priority, priority_score = transformer_priority(
+                t, risk
+            )
+            st.caption(
+                f"Priorité indicative : **{priority}** "
+                f"({priority_score:.1f}/100)"
+            )
+
+            with st.expander("🧠 Pourquoi le risque évolue ?"):
+                explain_df = local_risk_sensitivity(
+                    features,
+                    t["type"],
+                )
+                st.caption(
+                    f"Source : {explain_df.attrs.get('source', 'analyse locale')}. "
+                    "Il s'agit d'une sensibilité locale, pas d'une causalité."
+                )
+                st.dataframe(
+                    explain_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
             if risk >= 65:
 
                 st.error(
@@ -1392,11 +1768,16 @@ elif section == "🎲 Simulation de pannes":
         "Simulation — évolution progressive vers la panne"
     )
 
+    st.warning(
+        "⚠️ **Mode simulation pédagogique** : la progression d'une panne "
+        "est calculée par une courbe temporelle et des facteurs climatiques. "
+        "Elle n'utilise pas la prédiction XGBoost. Le mode manuel, lui, "
+        "utilise XGBoost si `modele_xgboost.pkl` est disponible."
+    )
     st.caption(
-        "Lorsqu'une panne est sélectionnée, "
-        "le risque commence près de 0 % puis augmente "
-        "progressivement. À 50 %, une interpellation "
-        "est déclenchée. À 65 %, le niveau devient élevé."
+        "Lorsqu'une panne est sélectionnée, le risque commence près de 0 % "
+        "puis augmente progressivement. À 50 %, une vigilance est déclenchée ; "
+        "à 65 %, le niveau devient élevé."
     )
 
     # ------------------------------------------------------------------------
@@ -2558,8 +2939,8 @@ elif section == "🗺️ Carte du parc":
     tooltip = {
         "text": (
             "{Nom} ({Type}) — {Quartier}\n"
-            "Risque : {Risque (%) } % — "
-            "{Statut}\n"
+            "Risque : {Risque (%) } % — {Statut}\n"
+            "Priorité : {Priorité} ({Score priorité})\n"
             "{État}"
         )
     }
@@ -2600,6 +2981,15 @@ elif section == "🗺️ Carte du parc":
         "🔴 **65–100 %** — Élevé"
     )
 
+    st.markdown(
+        "### Priorité indicative d'intervention"
+    )
+    pc1, pc2, pc3, pc4 = st.columns(4)
+    pc1.error("**P1** — Intervention immédiate")
+    pc2.warning("**P2** — Intervention prioritaire")
+    pc3.warning("**P3** — Surveillance renforcée")
+    pc4.info("**P4** — Surveillance normale")
+
     # ------------------------------------------------------------------------
     # OBSTACLES
     # ------------------------------------------------------------------------
@@ -2629,11 +3019,11 @@ elif section == "🗺️ Carte du parc":
 # ============================================================================
 
 st.caption(
-    "⚠️ Application de démonstration : les grandeurs "
-    "électriques du mode manuel, les pannes du mode "
-    "simulation et la météo simulée sont générées par "
-    "l'application. La météo affichée en direct utilise "
-    "Open-Meteo lorsque la connexion est disponible."
+    "⚠️ Application de démonstration : les grandeurs électriques du mode "
+    "manuel, les pannes du mode simulation et la météo simulée sont générées "
+    "par l'application. La météo affichée en direct utilise Open-Meteo lorsque "
+    "la connexion est disponible. Les priorités, seuils et extrapolations "
+    "doivent être validés avant toute utilisation opérationnelle."
 )
 
 # ============================================================================
