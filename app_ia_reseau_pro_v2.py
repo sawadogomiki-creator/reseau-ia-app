@@ -1,8 +1,8 @@
 """
 Système IA de Prédiction de Défaillance des Transformateurs de Distribution
-Version 3 — Parc de 3 transformateurs (cabine maçonnée / préfabriqué / haut de poteau)
-Mode manuel (curseurs animés) + Mode simulation (pannes automatiques)
-Carte du parc à Ouagadougou + prédiction avec prise en compte de la tendance (vitesse d'évolution du risque)
+Version 4 — Navigation par sections (boutons), horloge temps réel (comme une montre),
+progression réaliste des pannes (état normal -> alerte précoce -> critique),
+historique des pannes, et prévisions météo sur 7 jours (pluie / forte chaleur).
 """
 
 import os
@@ -19,12 +19,6 @@ import pydeck as pdk
 import requests
 import streamlit as st
 
-try:
-    from streamlit_autorefresh import st_autorefresh
-    HAS_AUTOREFRESH = True
-except ImportError:
-    HAS_AUTOREFRESH = False
-
 # ============================================================================
 # CONFIGURATION GÉNÉRALE
 # ============================================================================
@@ -32,12 +26,12 @@ except ImportError:
 st.set_page_config(page_title="IA Réseau Pro — Parc SONABEL", page_icon="⚡", layout="wide")
 
 MODEL_PATH = "modele_xgboost.pkl"
-HISTORY_LEN = 60          # nombre de points d'historique conservés par transformateur
-TICK_SECONDS = 1          # pas de l'horloge simulée
-ANIMATION_STEP = 0.18     # vitesse de convergence des curseurs vers leur valeur cible (mode manuel)
+HISTORY_LEN = 120
+ANIMATION_STEP = 0.18
 OUAGA_LAT, OUAGA_LON = 12.3714, -1.5197
+FAILURE_TIME_CONSTANT = 90.0   # secondes — vitesse d'installation d'une panne simulée
+HEAT_ALERT_THRESHOLD = 38.0    # °C — seuil utilisé pour l'indice de risque de forte chaleur
 
-# --- Le parc : 3 transformateurs, un par type, situés dans 3 quartiers réels de Ouagadougou ---
 TRANSFORMERS = [
     {
         "id": 1, "nom": "TR-01", "type": "Cabine maçonnée",
@@ -71,7 +65,7 @@ TRANSFORMERS = [
     },
 ]
 
-# --- Modes de panne simulables automatiquement (au moins 5, cf. cahier des charges) ---
+# Effet final (à progression = 1.0) de chaque mode de panne, atteint progressivement
 FAILURE_MODES = {
     "Surtension (foudre / manœuvre)": {
         "effet": {"voltage": +0.22, "oil_temp": +6, "charge": +0.05},
@@ -116,6 +110,8 @@ FAILURE_MODES = {
 }
 
 RISK_BANDS = [(0, 35, "Faible", "🟢"), (35, 65, "Modéré", "🟠"), (65, 101, "Élevé", "🔴")]
+SECTIONS = ["🖐️ Mode manuel", "🎲 Simulation de pannes", "📋 État des transformateurs",
+            "📈 Historique des pannes", "🌦️ Météo & prévisions", "🗺️ Carte du parc"]
 
 
 def risk_band(pct: float):
@@ -126,7 +122,7 @@ def risk_band(pct: float):
 
 
 # ============================================================================
-# CHARGEMENT DU MODÈLE (avec repli heuristique si le fichier est absent)
+# MODÈLE DE PRÉDICTION (XGBoost si disponible, sinon heuristique)
 # ============================================================================
 
 @st.cache_resource
@@ -134,41 +130,30 @@ def load_model():
     if os.path.exists(MODEL_PATH):
         try:
             return joblib.load(MODEL_PATH)
-        except Exception as e:
-            st.sidebar.warning(f"Modèle présent mais illisible ({e}) — repli sur le calcul heuristique.")
+        except Exception:
             return None
     return None
 
 
 MODEL = load_model()
-
 TYPE_MULTIPLIER = {"Cabine maçonnée": 0.85, "Préfabriqué": 1.0, "Haut de poteau": 1.20}
 
 
 def predict_risk(features: dict, ttype: str) -> float:
-    """Retourne un risque en pourcentage (0-100). Utilise le modèle XGBoost si
-    disponible, sinon une formule heuristique cohérente avec les facteurs physiques
-    du chapitre 1 (charge, température, humidité, tension, saison)."""
     season_map = {"Saison sèche fraîche": 0, "Saison sèche chaude": 1, "Harmattan": 2, "Saison des pluies": 3}
     season_code = season_map.get(features.get("season_label", "Saison sèche chaude"), 1)
-
     if MODEL is not None:
         try:
             x = pd.DataFrame([{
-                "charge": features["charge"],
-                "oil": features["oil_temp"],
-                "ambient": features["ambient"],
-                "humidity": features["humidity"],
-                "voltage": features["voltage"],
-                "season": season_code,
+                "charge": features["charge"], "oil": features["oil_temp"],
+                "ambient": features["ambient"], "humidity": features["humidity"],
+                "voltage": features["voltage"], "season": season_code,
             }])
-            proba = MODEL.predict_proba(x)[0][1]
-            base = float(proba * 100)
+            base = float(MODEL.predict_proba(x)[0][1] * 100)
         except Exception:
             base = _heuristic_risk(features, season_code)
     else:
         base = _heuristic_risk(features, season_code)
-
     return float(np.clip(base * TYPE_MULTIPLIER.get(ttype, 1.0), 0, 100))
 
 
@@ -184,27 +169,53 @@ def _heuristic_risk(f: dict, season_code: int) -> float:
 
 
 # ============================================================================
-# MÉTÉO EN DIRECT (Ouagadougou) — via Open-Meteo, avec repli simulé
+# MÉTÉO — direct + prévisions 7 jours
 # ============================================================================
 
 @st.cache_data(ttl=600)
 def get_live_weather():
     try:
-        url = (
-            "https://api.open-meteo.com/v1/forecast"
-            f"?latitude={OUAGA_LAT}&longitude={OUAGA_LON}"
-            "&current=temperature_2m,relative_humidity_2m&timezone=Africa%2FOuagadougou"
-        )
-        r = requests.get(url, timeout=4)
-        data = r.json()
-        temp = float(data["current"]["temperature_2m"])
-        hum = float(data["current"]["relative_humidity_2m"])
-        return temp, hum, True
+        url = (f"https://api.open-meteo.com/v1/forecast?latitude={OUAGA_LAT}&longitude={OUAGA_LON}"
+               "&current=temperature_2m,relative_humidity_2m&timezone=Africa%2FOuagadougou")
+        data = requests.get(url, timeout=4).json()
+        return float(data["current"]["temperature_2m"]), float(data["current"]["relative_humidity_2m"]), True
     except Exception:
         month = datetime.now().month
         temp = 38 if month in (3, 4, 5) else (28 if month in (7, 8, 9) else 33)
         hum = 75 if month in (7, 8, 9) else 25
         return float(temp), float(hum), False
+
+
+@st.cache_data(ttl=1800)
+def get_weekly_forecast():
+    try:
+        url = (f"https://api.open-meteo.com/v1/forecast?latitude={OUAGA_LAT}&longitude={OUAGA_LON}"
+               "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+               "&forecast_days=7&timezone=Africa%2FOuagadougou")
+        data = requests.get(url, timeout=5).json()
+        d = data["daily"]
+        rows = []
+        for i, date in enumerate(d["time"]):
+            tmax = float(d["temperature_2m_max"][i])
+            tmin = float(d["temperature_2m_min"][i])
+            rain_pct = float(d["precipitation_probability_max"][i])
+            heat_pct = float(np.clip((tmax - 32) / 13 * 100, 0, 100))
+            rows.append({"date": date, "tmax": tmax, "tmin": tmin,
+                         "pluie_pct": rain_pct, "chaleur_pct": heat_pct})
+        return rows, True
+    except Exception:
+        month = datetime.now().month
+        rainy = month in (6, 7, 8, 9, 10)
+        rows = []
+        for i in range(7):
+            d = datetime.now() + timedelta(days=i)
+            tmax = 36 + np.random.uniform(-3, 4) if not rainy else 31 + np.random.uniform(-2, 3)
+            rain_pct = np.random.uniform(40, 85) if rainy else np.random.uniform(0, 15)
+            heat_pct = float(np.clip((tmax - 32) / 13 * 100, 0, 100))
+            rows.append({"date": d.strftime("%Y-%m-%d"), "tmax": round(tmax, 1),
+                         "tmin": round(tmax - 8, 1), "pluie_pct": round(rain_pct, 0),
+                         "chaleur_pct": round(heat_pct, 0)})
+        return rows, False
 
 
 # ============================================================================
@@ -216,20 +227,17 @@ def init_state():
         return
     st.session_state.initialized = True
     st.session_state.running = True
-    st.session_state.sim_time = datetime.now()
+    st.session_state.section = SECTIONS[0]
     st.session_state.history = {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS}
 
-    # Mode manuel : valeur cible (curseur) et valeur affichée/effective (animée)
-    st.session_state.manual_target = {
-        t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS
-    }
-    st.session_state.manual_effective = {
-        t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS
-    }
+    st.session_state.manual_target = {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS}
+    st.session_state.manual_effective = {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS}
 
-    # Mode simulation : panne active par transformateur (ou None)
     st.session_state.sim_failure = {t["id"]: None for t in TRANSFORMERS}
-    st.session_state.sim_elapsed = {t["id"]: 0 for t in TRANSFORMERS}
+    st.session_state.sim_start_time = {t["id"]: None for t in TRANSFORMERS}
+
+    st.session_state.event_log = []          # historique des épisodes à risque élevé
+    st.session_state.active_event = {t["id"]: None for t in TRANSFORMERS}
 
 
 def animate_towards_target(t_id):
@@ -242,26 +250,20 @@ def animate_towards_target(t_id):
 
 
 def push_history(t_id, risk_pct, features):
-    st.session_state.history[t_id].append({
-        "t": st.session_state.sim_time,
-        "risk": risk_pct,
-        **features,
-    })
+    st.session_state.history[t_id].append({"t": datetime.now(), "risk": risk_pct, **features})
 
 
 def compute_trend(t_id):
-    """Calcule la pente du risque (points de %/minute) sur les dernières mesures,
-    et une catégorie de tendance servant à amplifier l'attention portée à l'alerte."""
     hist = st.session_state.history[t_id]
     if len(hist) < 3:
         return 0.0, "stable"
-    recent = list(hist)[-10:]
+    recent = list(hist)[-12:]
     t0 = recent[0]["t"]
     xs = [(p["t"] - t0).total_seconds() / 60.0 for p in recent]
     ys = [p["risk"] for p in recent]
     if xs[-1] - xs[0] < 1e-6:
         return 0.0, "stable"
-    slope = np.polyfit(xs, ys, 1)[0]  # % par minute
+    slope = np.polyfit(xs, ys, 1)[0]
     if slope < 0.5:
         cat = "stable"
     elif slope < 2.5:
@@ -274,89 +276,117 @@ def compute_trend(t_id):
 
 
 def attention_score(risk_pct, slope):
-    """Combine le niveau absolu de risque et sa vitesse d'évolution : à niveau égal,
-    un risque qui grimpe vite doit attirer davantage l'attention qu'un risque stable,
-    même élevé depuis longtemps et déjà sous surveillance."""
-    slope_bonus = np.clip(slope, 0, 10) * 4.0  # jusqu'à +40 pts si montée très rapide
+    slope_bonus = np.clip(slope, 0, 10) * 4.0
     return float(np.clip(risk_pct * 0.75 + slope_bonus, 0, 100))
 
 
-def prognosis_text(t_id, risk_pct, slope, failure_label=None):
-    """Construit un pronostic du type :
-    « Risque de court-circuit à venir : 40 % dans environ 5 h si rien n'est fait. »"""
+def prognosis_text(risk_pct, slope, failure_label=None):
     label = failure_label or "défaillance"
     if slope <= 0.15:
-        return f"Évolution stable — pas d'aggravation significative détectée pour l'instant sur {label.lower()}."
+        return f"Évolution stable — pas d'aggravation significative détectée pour {label.lower()}."
     remaining_pct = max(0.0, 90 - risk_pct)
     minutes_to_90 = remaining_pct / slope if slope > 0 else None
     if minutes_to_90 is None or minutes_to_90 > 24 * 60:
         return f"Tendance à la hausse lente pour {label.lower()} — surveillance renforcée recommandée."
     hours = minutes_to_90 / 60
-    if hours < 1:
-        delay = f"environ {int(minutes_to_90)} min"
-    else:
-        delay = f"environ {hours:.1f} h"
+    delay = f"environ {int(minutes_to_90)} min" if hours < 1 else f"environ {hours:.1f} h"
     return (f"Risque de {label.lower()} à venir : {min(90, risk_pct + slope * 30):.0f} % "
             f"dans {delay} si rien n'est fait.")
 
 
+def failure_phase(progress: float):
+    if progress < 0.12:
+        return "🔍 Anomalie naissante", "info", (
+            "Un écart encore ténu vient d'apparaître sur ce transformateur. Rien de visible "
+            "à l'œil nu, mais le modèle détecte déjà une dérive et la place sous surveillance."
+        )
+    if progress < 0.45:
+        return "⚠️ Dégradation en cours", "warning", (
+            "L'écart se creuse nettement : les grandeurs électriques et thermiques s'éloignent "
+            "progressivement de leur plage normale. Une intervention préventive limiterait l'aggravation."
+        )
+    if progress < 0.8:
+        return "🟠 Aggravation avancée", "warning", (
+            "La dégradation s'accélère. Sans action, l'état critique sera atteint dans un délai court."
+        )
+    return "🚨 État critique", "error", (
+        "Le transformateur a atteint un état proche de la défaillance complète. Intervention urgente requise."
+    )
+
+
+def log_event_if_needed(t_id, nom, band_label, risk, panne_label):
+    active = st.session_state.active_event[t_id]
+    if band_label == "Élevé":
+        if active is None:
+            st.session_state.event_log.append({
+                "transfo_id": t_id, "nom": nom, "type_panne": panne_label or "Mode manuel",
+                "debut": datetime.now(), "fin": None, "risque_max": risk,
+            })
+            st.session_state.active_event[t_id] = len(st.session_state.event_log) - 1
+        else:
+            ev = st.session_state.event_log[active]
+            ev["risque_max"] = max(ev["risque_max"], risk)
+    else:
+        if active is not None:
+            st.session_state.event_log[active]["fin"] = datetime.now()
+            st.session_state.active_event[t_id] = None
+
+
 # ============================================================================
-# INTERFACE — EN-TÊTE, HORLOGE, MÉTÉO COMMUNE
+# INITIALISATION + EN-TÊTE (horloge « comme une montre » + météo commune)
 # ============================================================================
 
 init_state()
 
-if HAS_AUTOREFRESH:
-    st_autorefresh(interval=TICK_SECONDS * 1000, key="tick_refresh")
-
 st.title("⚡ Système IA de Prédiction — Parc de transformateurs (Ouagadougou)")
+
+ambient_live, humidity_live, live_ok = get_live_weather()
 
 top1, top2, top3 = st.columns([2, 2, 3])
 with top1:
-    if st.button("⏸️ Pause" if st.session_state.running else "▶️ Reprendre"):
+    if st.button("⏸️ Pause" if st.session_state.running else "▶️ Reprendre", key="run_toggle"):
         st.session_state.running = not st.session_state.running
 with top2:
-    st.metric("🕒 Horloge de simulation", st.session_state.sim_time.strftime("%d/%m/%Y %H:%M:%S"))
+    st.metric("🕒 Heure actuelle", datetime.now().strftime("%H:%M:%S"))
+    st.caption(datetime.now().strftime("%A %d %B %Y"))
 with top3:
-    ambient_live, humidity_live, live_ok = get_live_weather()
     source = "en direct (Open-Meteo)" if live_ok else "estimation saisonnière (hors ligne)"
     st.metric(f"🌡️ Météo Ouagadougou — {source}", f"{ambient_live:.1f} °C / {humidity_live:.0f} % HR")
 
-if st.session_state.running:
-    st.session_state.sim_time += timedelta(seconds=TICK_SECONDS * 30)  # 30x accéléré
-
-st.markdown(
-    "Horloge en direct : le risque et son pourcentage sont recalculés à chaque tic pour "
-    "chacun des 3 transformateurs du parc. Une alerte est mise en avant plus tôt lorsque "
-    "le risque **grimpe vite**, même s'il n'a pas encore atteint le seuil critique."
+st.caption(
+    "L'horloge affiche l'heure réelle, comme une montre. Tant que la simulation n'est pas en "
+    "pause, la page se rafraîchit chaque seconde et les pannes en cours poursuivent leur évolution."
 )
 
 with st.expander("📋 Étude comparative des 3 types de transformateurs du parc"):
-    comp_df = pd.DataFrame([
+    st.table(pd.DataFrame([
         {"Type": t["type"], "Quartier": t["quartier"], "Vulnérabilité type": t["vulnerabilite"]}
         for t in TRANSFORMERS
-    ])
-    st.table(comp_df)
+    ]))
 
 st.divider()
 
 # ============================================================================
-# NAVIGATION — 2 PARTIES
+# NAVIGATION PAR BOUTONS
 # ============================================================================
 
-partie = st.radio(
-    "Sélectionner le mode",
-    ["🖐️ Partie 1 — Mode manuel", "🎲 Partie 2 — Mode simulation de pannes"],
-    horizontal=True,
-)
+nav_cols = st.columns(len(SECTIONS))
+for col, sec in zip(nav_cols, SECTIONS):
+    is_active = st.session_state.section == sec
+    if col.button(sec, key=f"nav_{sec}", use_container_width=True,
+                  type="primary" if is_active else "secondary"):
+        st.session_state.section = sec
 
-# ----------------------------------------------------------------------------
-# PARTIE 1 — MODE MANUEL (curseurs individuels, effet progressif/animé)
-# ----------------------------------------------------------------------------
-if partie.startswith("🖐️"):
+st.divider()
+section = st.session_state.section
+
+# ============================================================================
+# SECTION — MODE MANUEL
+# ============================================================================
+if section == "🖐️ Mode manuel":
     st.subheader("Mode manuel — curseurs individuels par transformateur")
     st.caption("Une modification de curseur ne s'applique pas instantanément : la valeur "
-               "effective glisse progressivement vers la valeur choisie, comme sur l'installation réelle.")
+               "effective glisse progressivement vers la valeur choisie.")
 
     cols = st.columns(3)
     for col, t in zip(cols, TRANSFORMERS):
@@ -370,22 +400,19 @@ if partie.startswith("🖐️"):
 
             animate_towards_target(t["id"])
             eff = st.session_state.manual_effective[t["id"]]
-
             oil_temp = 45 + eff["charge"] * 28 + max(0, ambient_live - 30) * 0.6
-            features = {
-                "charge": eff["charge"], "oil_temp": oil_temp, "ambient": ambient_live,
-                "humidity": humidity_live, "voltage": eff["voltage"],
-                "season_label": "Saison sèche chaude",
-            }
+            features = {"charge": eff["charge"], "oil_temp": oil_temp, "ambient": ambient_live,
+                        "humidity": humidity_live, "voltage": eff["voltage"], "season_label": "Saison sèche chaude"}
             risk = predict_risk(features, t["type"])
             push_history(t["id"], risk, features)
             slope, trend_cat = compute_trend(t["id"])
             attn = attention_score(risk, slope)
             band_label, emoji = risk_band(attn)
+            log_event_if_needed(t["id"], t["nom"], band_label, risk, None)
 
             st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
             if trend_cat in ("en hausse rapide", "critique — hausse brutale"):
-                st.error(f"{emoji} **{band_label} — {trend_cat.upper()}** : le risque augmente vite, priorité d'intervention.")
+                st.error(f"{emoji} **{band_label} — {trend_cat.upper()}** : priorité d'intervention.")
             elif band_label == "Élevé":
                 st.error(f"{emoji} **Statut : {band_label}**")
             elif band_label == "Modéré":
@@ -393,21 +420,13 @@ if partie.startswith("🖐️"):
             else:
                 st.success(f"{emoji} **Statut : {band_label}** ({trend_cat})")
 
-            hist = list(st.session_state.history[t["id"]])
-            if len(hist) >= 2:
-                dfh = pd.DataFrame(hist)
-                fig = px.line(dfh, x="t", y="risk", title="Historique du risque")
-                fig.update_layout(height=180, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True, key=f"hist_{t['id']}")
-
-# ----------------------------------------------------------------------------
-# PARTIE 2 — MODE SIMULATION (pannes automatiques, évolution simulée)
-# ----------------------------------------------------------------------------
-else:
-    st.subheader("Mode simulation — déclenchement et évolution automatique de pannes")
-    st.caption("Choisissez un mode de panne pour un ou plusieurs transformateurs : l'application "
-               "fait évoluer progressivement les grandeurs électriques et thermiques, comme une "
-               "dégradation réelle qui s'aggrave au fil du temps.")
+# ============================================================================
+# SECTION — SIMULATION DE PANNES (progression réaliste, alerte précoce)
+# ============================================================================
+elif section == "🎲 Simulation de pannes":
+    st.subheader("Mode simulation — du fonctionnement normal à la panne, progressivement")
+    st.caption("Le modèle détecte une dérive dès les premières secondes, bien avant que le "
+               "risque ne devienne critique : c'est cette anticipation qui est mise en avant ici.")
 
     cols = st.columns(3)
     for col, t in zip(cols, TRANSFORMERS):
@@ -417,22 +436,25 @@ else:
 
             options = ["Aucune (fonctionnement normal)"] + list(FAILURE_MODES.keys())
             current_choice = st.session_state.sim_failure[t["id"]] or options[0]
-            choice = st.selectbox("Mode de panne simulé", options, index=options.index(current_choice)
-                                   if current_choice in options else 0, key=f"fail_{t['id']}")
+            choice = st.selectbox("Mode de panne simulé", options,
+                                   index=options.index(current_choice) if current_choice in options else 0,
+                                   key=f"fail_{t['id']}")
 
-            if choice != st.session_state.sim_failure[t["id"]]:
-                st.session_state.sim_failure[t["id"]] = None if choice == options[0] else choice
-                st.session_state.sim_elapsed[t["id"]] = 0
+            if choice != (st.session_state.sim_failure[t["id"]] or options[0]):
+                if choice == options[0]:
+                    st.session_state.sim_failure[t["id"]] = None
+                    st.session_state.sim_start_time[t["id"]] = None
+                else:
+                    st.session_state.sim_failure[t["id"]] = choice
+                    st.session_state.sim_start_time[t["id"]] = time.time()
 
             active_failure = st.session_state.sim_failure[t["id"]]
-
             base = {"charge": 0.8, "oil_temp": 60.0, "voltage": 1.0}
-            if active_failure and st.session_state.running:
-                st.session_state.sim_elapsed[t["id"]] += 1
-            n = st.session_state.sim_elapsed[t["id"]]
-            progress = 1 - math.exp(-n / 25.0)  # progression logarithmique de la dégradation
 
             if active_failure:
+                start = st.session_state.sim_start_time[t["id"]]
+                elapsed = max(0.0, time.time() - start) if st.session_state.running else max(0.0, time.time() - start)
+                progress = 1 - math.exp(-elapsed / FAILURE_TIME_CONSTANT)
                 effet = FAILURE_MODES[active_failure]["effet"]
                 charge = base["charge"] + effet.get("charge", 0) * progress
                 oil_temp = base["oil_temp"] + effet.get("oil_temp", 0) * progress
@@ -440,36 +462,29 @@ else:
                 humidity_adj = humidity_live + effet.get("humidity", 0) * progress
                 ambient_adj = ambient_live + effet.get("ambient", 0) * progress
             else:
+                progress = 0.0
                 charge, oil_temp, voltage = base["charge"], base["oil_temp"], base["voltage"]
                 humidity_adj, ambient_adj = humidity_live, ambient_live
 
-            features = {
-                "charge": charge, "oil_temp": oil_temp, "ambient": ambient_adj,
-                "humidity": humidity_adj, "voltage": voltage,
-                "season_label": "Saison sèche chaude",
-            }
+            features = {"charge": charge, "oil_temp": oil_temp, "ambient": ambient_adj,
+                        "humidity": humidity_adj, "voltage": voltage, "season_label": "Saison sèche chaude"}
             risk = predict_risk(features, t["type"])
             push_history(t["id"], risk, features)
             slope, trend_cat = compute_trend(t["id"])
             attn = attention_score(risk, slope)
             band_label, emoji = risk_band(attn)
+            log_event_if_needed(t["id"], t["nom"], band_label, risk, active_failure)
 
             st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
 
             if active_failure:
-                if trend_cat in ("en hausse rapide", "critique — hausse brutale") or band_label == "Élevé":
-                    st.error(f"{emoji} **{band_label} — {trend_cat}**")
-                elif band_label == "Modéré":
-                    st.warning(f"{emoji} **Statut : {band_label}** ({trend_cat})")
-                else:
-                    st.info(f"{emoji} Panne en cours de développement — statut encore {band_label.lower()}.")
-
-                st.markdown(f"**Pronostic :** {prognosis_text(t['id'], risk, slope, active_failure)}")
-
+                st.progress(min(1.0, progress), text=f"Progression de la panne : {progress*100:.0f} %")
+                phase_label, phase_kind, phase_text = failure_phase(progress)
+                getattr(st, phase_kind)(f"{phase_label} — {phase_text}")
+                st.markdown(f"**Pronostic :** {prognosis_text(risk, slope, active_failure)}")
                 st.markdown("**Actions réseau recommandées :**")
                 st.markdown("- Soulager le réseau en reportant une partie de la charge sur un poste voisin si possible.")
                 st.markdown("- Vérifier et informer les clients connectés en aval de ce transformateur.")
-
                 with st.expander("🩺 Diagnostic et directives correctives ciblées"):
                     for d in FAILURE_MODES[active_failure]["directives"]:
                         st.markdown(f"- {d}")
@@ -479,65 +494,132 @@ else:
             hist = list(st.session_state.history[t["id"]])
             if len(hist) >= 2:
                 dfh = pd.DataFrame(hist)
-                fig = px.line(dfh, x="t", y="risk", title="Historique du risque (simulation)")
+                fig = px.line(dfh, x="t", y="risk", title="Historique du risque")
                 fig.update_layout(height=180, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True, key=f"simhist_{t['id']}")
 
-st.divider()
+# ============================================================================
+# SECTION — ÉTAT DES TRANSFORMATEURS
+# ============================================================================
+elif section == "📋 État des transformateurs":
+    st.subheader("État courant du parc")
+    rows = []
+    for t in TRANSFORMERS:
+        hist = st.session_state.history[t["id"]]
+        last = hist[-1] if hist else None
+        slope, trend_cat = compute_trend(t["id"])
+        risk = last["risk"] if last else 0.0
+        attn = attention_score(risk, slope)
+        band_label, emoji = risk_band(attn)
+        rows.append({
+            "N°": t["id"], "Nom": t["nom"], "Type": t["type"], "Quartier": t["quartier"],
+            "Charge": f"{last['charge']:.2f}" if last else "—",
+            "T° huile (°C)": f"{last['oil_temp']:.1f}" if last else "—",
+            "Tension (p.u.)": f"{last['voltage']:.2f}" if last else "—",
+            "Risque (%)": round(risk, 1), "Tendance": trend_cat, "Statut": f"{emoji} {band_label}",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("Ce tableau reflète l'état le plus récent calculé dans les sections Mode manuel et Simulation.")
 
 # ============================================================================
-# PARC NUMÉROTÉ + CARTE DU RÉSEAU
+# SECTION — HISTORIQUE DES PANNES
 # ============================================================================
+elif section == "📈 Historique des pannes":
+    st.subheader("Historique des épisodes à risque élevé")
+    if not st.session_state.event_log:
+        st.info("Aucun épisode à risque élevé enregistré pour l'instant.")
+    else:
+        rows = []
+        for ev in reversed(st.session_state.event_log):
+            fin = ev["fin"]
+            duree = ((fin or datetime.now()) - ev["debut"]).total_seconds() / 60
+            rows.append({
+                "Transformateur": ev["nom"], "Cause": ev["type_panne"],
+                "Début": ev["debut"].strftime("%H:%M:%S"),
+                "Fin": fin.strftime("%H:%M:%S") if fin else "en cours",
+                "Durée (min)": round(duree, 1), "Risque max (%)": round(ev["risque_max"], 1),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("Un épisode est ouvert dès qu'un transformateur atteint le niveau de risque « Élevé », "
+               "et clôturé lorsqu'il en ressort. Cet historique alimente le calcul de tendance du modèle.")
 
-st.subheader("🗺️ Parc de transformateurs — localisation, risque et obstacles d'intervention")
+# ============================================================================
+# SECTION — MÉTÉO & PRÉVISIONS
+# ============================================================================
+elif section == "🌦️ Météo & prévisions":
+    st.subheader("Météo en direct et prévisions à 7 jours")
+    source = "en direct (Open-Meteo)" if live_ok else "estimation saisonnière (hors ligne)"
+    c1, c2 = st.columns(2)
+    c1.metric(f"Température actuelle — {source}", f"{ambient_live:.1f} °C")
+    c2.metric("Humidité relative actuelle", f"{humidity_live:.0f} %")
 
-rows = []
-for t in TRANSFORMERS:
-    hist = st.session_state.history[t["id"]]
-    last_risk = hist[-1]["risk"] if hist else 0.0
-    slope, trend_cat = compute_trend(t["id"])
-    attn = attention_score(last_risk, slope)
-    band_label, emoji = risk_band(attn)
-    rows.append({
-        "N°": t["id"], "Nom": t["nom"], "Type": t["type"], "Quartier": t["quartier"],
-        "Risque (%)": round(last_risk, 1), "Tendance": trend_cat, "Statut": f"{emoji} {band_label}",
-        "lat": t["lat"], "lon": t["lon"], "attn": attn,
-    })
+    rows, forecast_ok = get_weekly_forecast()
+    st.caption("Prévisions " + ("en direct (Open-Meteo)." if forecast_ok else
+               "estimées hors ligne (à titre indicatif) — connexion indisponible."))
+    df = pd.DataFrame(rows)
+    df["Jour"] = pd.to_datetime(df["date"]).dt.strftime("%a %d/%m")
+    st.dataframe(df[["Jour", "tmax", "tmin", "pluie_pct", "chaleur_pct"]].rename(columns={
+        "tmax": "T° max (°C)", "tmin": "T° min (°C)",
+        "pluie_pct": "Probabilité de pluie (%)", "chaleur_pct": "Indice de forte chaleur (%)",
+    }), use_container_width=True, hide_index=True)
 
-df_parc = pd.DataFrame(rows)
-st.dataframe(df_parc.drop(columns=["lat", "lon", "attn"]), use_container_width=True, hide_index=True)
+    fig = px.bar(df, x="Jour", y=["pluie_pct", "chaleur_pct"], barmode="group",
+                 labels={"value": "%", "variable": "Indicateur"},
+                 title="Probabilité de pluie et indice de forte chaleur — 7 prochains jours")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"L'indice de forte chaleur est une estimation interne fondée sur l'écart entre la "
+               f"température maximale prévue et le seuil de vigilance retenu ({HEAT_ALERT_THRESHOLD:.0f} °C) ; "
+               "la probabilité de pluie provient directement des prévisions météorologiques.")
 
-def color_for(attn):
-    if attn >= 65:
-        return [220, 40, 40, 200]
-    if attn >= 35:
-        return [240, 160, 30, 200]
-    return [40, 160, 70, 200]
+# ============================================================================
+# SECTION — CARTE DU PARC
+# ============================================================================
+elif section == "🗺️ Carte du parc":
+    st.subheader("Localisation, risque et obstacles d'intervention")
+    rows = []
+    for t in TRANSFORMERS:
+        hist = st.session_state.history[t["id"]]
+        last_risk = hist[-1]["risk"] if hist else 0.0
+        slope, trend_cat = compute_trend(t["id"])
+        attn = attention_score(last_risk, slope)
+        band_label, emoji = risk_band(attn)
+        rows.append({"N°": t["id"], "Nom": t["nom"], "Type": t["type"], "Quartier": t["quartier"],
+                     "Risque (%)": round(last_risk, 1), "Statut": f"{emoji} {band_label}",
+                     "lat": t["lat"], "lon": t["lon"], "attn": attn})
+    df_parc = pd.DataFrame(rows)
+    st.dataframe(df_parc.drop(columns=["lat", "lon", "attn"]), use_container_width=True, hide_index=True)
 
-df_parc["color"] = df_parc["attn"].apply(color_for)
-df_parc["radius"] = 120 + df_parc["attn"] * 3
+    def color_for(attn):
+        if attn >= 65:
+            return [220, 40, 40, 200]
+        if attn >= 35:
+            return [240, 160, 30, 200]
+        return [40, 160, 70, 200]
 
-layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_parc,
-    get_position="[lon, lat]",
-    get_fill_color="color",
-    get_radius="radius",
-    pickable=True,
-)
-view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=11.5, pitch=0)
-tooltip = {"text": "{Nom} ({Type}) — {Quartier}\nRisque : {Risque (%)} % — {Statut}"}
-st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip,
-                          map_style="mapbox://styles/mapbox/light-v9"))
+    df_parc["color"] = df_parc["attn"].apply(color_for)
+    df_parc["radius"] = 120 + df_parc["attn"] * 3
+    layer = pdk.Layer("ScatterplotLayer", data=df_parc, get_position="[lon, lat]",
+                       get_fill_color="color", get_radius="radius", pickable=True)
+    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=11.5, pitch=0)
+    tooltip = {"text": "{Nom} ({Type}) — {Quartier}\nRisque : {Risque (%)} % — {Statut}"}
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip,
+                              map_style="mapbox://styles/mapbox/light-v9"))
 
-st.markdown("**Obstacles et contraintes d'accès relevés autour de chaque poste :**")
-for t in TRANSFORMERS:
-    with st.expander(f"{t['nom']} — {t['quartier']} ({t['type']})"):
-        for o in t["obstacles"]:
-            st.markdown(f"- {o}")
+    st.markdown("**Obstacles et contraintes d'accès relevés autour de chaque poste :**")
+    for t in TRANSFORMERS:
+        with st.expander(f"{t['nom']} — {t['quartier']} ({t['type']})"):
+            for o in t["obstacles"]:
+                st.markdown(f"- {o}")
 
 st.caption(
     "⚠️ Application de démonstration : les grandeurs électriques du mode manuel et les pannes du "
-    "mode simulation sont générées par l'application ; la météo commune est récupérée en direct "
-    "lorsque la connexion le permet, avec un repli saisonnier sinon."
+    "mode simulation sont générées par l'application ; la météo est récupérée en direct lorsque "
+    "la connexion le permet, avec un repli saisonnier sinon."
 )
+
+# ============================================================================
+# BOUCLE D'ACTUALISATION — fait avancer l'horloge et les simulations chaque seconde
+# ============================================================================
+if st.session_state.running:
+    time.sleep(1)
+    st.rerun()
