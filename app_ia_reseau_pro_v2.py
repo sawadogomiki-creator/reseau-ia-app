@@ -456,12 +456,12 @@ elif section == "🎲 Simulation de pannes":
             st.caption(f"📍 {t['quartier']}")
 
             options = ["Aucune (fonctionnement normal)"] + list(FAILURE_MODES.keys())
-            current_choice = st.session_state.sim_failure[t["id"]] or options[0]
+            current_choice = st.session_state.sim_failure.get(t["id"]) or options[0]
             choice = st.selectbox("Mode de panne simulé", options,
                                    index=options.index(current_choice) if current_choice in options else 0,
                                    key=f"fail_{t['id']}")
 
-            if choice != (st.session_state.sim_failure[t["id"]] or options[0]):
+            if choice != (st.session_state.sim_failure.get(t["id"]) or options[0]):
                 if choice == options[0]:
                     st.session_state.sim_failure[t["id"]] = None
                     st.session_state.sim_start_time[t["id"]] = None
@@ -469,12 +469,18 @@ elif section == "🎲 Simulation de pannes":
                     st.session_state.sim_failure[t["id"]] = choice
                     st.session_state.sim_start_time[t["id"]] = time.time()
 
-            active_failure = st.session_state.sim_failure[t["id"]]
+            active_failure = st.session_state.sim_failure.get(t["id"])
             base = {"charge": 0.8, "oil_temp": 60.0, "voltage": 1.0}
 
             if active_failure:
-                start = st.session_state.sim_start_time[t["id"]]
-                elapsed = max(0.0, time.time() - start) if st.session_state.running else max(0.0, time.time() - start)
+                start = st.session_state.sim_start_time.get(t["id"])
+                if start is None:
+                    # Filet de sécurité : une panne est marquée active mais son horodatage de
+                    # départ est manquant (état incohérent) — on redémarre le chrono maintenant
+                    # plutôt que de planter sur une soustraction avec None.
+                    start = time.time()
+                    st.session_state.sim_start_time[t["id"]] = start
+                elapsed = max(0.0, time.time() - start)
                 progress = 1 - math.exp(-elapsed / FAILURE_TIME_CONSTANT)
                 effet = FAILURE_MODES[active_failure]["effet"]
                 charge = base["charge"] + effet.get("charge", 0) * progress
