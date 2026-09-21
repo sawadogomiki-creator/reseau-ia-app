@@ -1,8 +1,10 @@
 """
 Système IA de Prédiction de Défaillance des Transformateurs de Distribution
-Version 4 — Navigation par sections (boutons), horloge temps réel (comme une montre),
-progression réaliste des pannes (état normal -> alerte précoce -> critique),
-historique des pannes, et prévisions météo sur 7 jours (pluie / forte chaleur).
+Version 5 — Navigation par sections (boutons), horloge temps réel (comme une montre),
+progression réaliste des pannes différenciée par type de transformateur,
+actions réseau spécifiques par panne ET par type de poste, historique des pannes,
+météo simulable (température + type de temps) avec impact différencié selon le type
+de transformateur, carte réaliste (fond routier), et prévisions météo sur 7 jours.
 """
 
 import os
@@ -29,57 +31,9 @@ MODEL_PATH = "modele_xgboost.pkl"
 HISTORY_LEN = 120
 ANIMATION_STEP = 0.18
 OUAGA_LAT, OUAGA_LON = 12.3714, -1.5197
-FAILURE_TIME_CONSTANT = 90.0   # secondes — vitesse d'installation d'une panne simulée
+FAILURE_TIME_CONSTANT = 90.0   # secondes — vitesse d'installation d'une panne simulée (poste de référence)
 HEAT_ALERT_THRESHOLD = 38.0    # °C — seuil utilisé pour l'indice de risque de forte chaleur
-WEATHER_MODES = {
-    "☀️ Temps normal": {
-        "humidity_factor": 1.00,
-        "heat_factor": 1.00,
-        "storm_factor": 0.00,
-        "rain_factor": 0.00,
-        "wind_factor": 1.00
-    },
 
-    "🥵 Forte chaleur": {
-        "humidity_factor": 0.85,
-        "heat_factor": 1.40,
-        "storm_factor": 0.00,
-        "rain_factor": 0.00,
-        "wind_factor": 1.00
-    },
-
-    "🌧️ Pluie": {
-        "humidity_factor": 1.25,
-        "heat_factor": 0.90,
-        "storm_factor": 0.10,
-        "rain_factor": 1.30,
-        "wind_factor": 1.00
-    },
-
-    "⛈️ Orage": {
-        "humidity_factor": 1.35,
-        "heat_factor": 1.00,
-        "storm_factor": 1.80,
-        "rain_factor": 1.50,
-        "wind_factor": 1.30
-    },
-
-    "💨 Harmattan": {
-        "humidity_factor": 0.65,
-        "heat_factor": 1.15,
-        "storm_factor": 0.00,
-        "rain_factor": 0.00,
-        "wind_factor": 1.25
-    },
-
-    "❄️ Fraîcheur": {
-        "humidity_factor": 1.10,
-        "heat_factor": 0.65,
-        "storm_factor": 0.00,
-        "rain_factor": 0.00,
-        "wind_factor": 0.90
-    }
-}
 TRANSFORMERS = [
     {
         "id": 1, "nom": "TR-01", "type": "Cabine maçonnée",
@@ -157,6 +111,71 @@ FAILURE_MODES = {
     },
 }
 
+# Libellé court utilisé pour l'affichage du risque nommé (mode manuel)
+SHORT_FAILURE_LABELS = {
+    "Surtension (foudre / manœuvre)": "surtension",
+    "Court-circuit interne": "court-circuit",
+    "Température élevée / surcharge thermique": "surchauffe thermique",
+    "Surcharge électrique prolongée": "surcharge électrique",
+    "Défaut d'isolement (humidité)": "défaut d'isolement (humidité)",
+}
+
+# Vitesse relative de progression d'une panne selon le type de poste : un transformateur
+# sur poteau, totalement exposé, bascule plus vite vers l'état critique qu'une cabine
+# maçonnée mieux protégée, à panne strictement identique.
+TYPE_TIME_FACTOR = {"Cabine maçonnée": 1.35, "Préfabriqué": 1.0, "Haut de poteau": 0.7}
+
+# Actions réseau recommandées : dépendent du type de panne...
+NETWORK_ACTIONS_BY_FAILURE = {
+    "Surtension (foudre / manœuvre)": [
+        "Vérifier les autres postes du même départ HTA, susceptibles d'avoir subi la même surtension.",
+        "Basculer temporairement les abonnés sensibles sur un départ voisin si des perturbations sont constatées.",
+    ],
+    "Court-circuit interne": [
+        "Isoler immédiatement ce transformateur du réseau et consigner le disjoncteur amont.",
+        "Réalimenter les abonnés concernés depuis un poste de secours ou un départ voisin dans les meilleurs délais.",
+    ],
+    "Température élevée / surcharge thermique": [
+        "Reporter une partie de la charge de ce transformateur vers un poste voisin le temps du refroidissement.",
+        "Limiter temporairement les nouveaux branchements (climatisation, groupes de secours) sur ce départ.",
+    ],
+    "Surcharge électrique prolongée": [
+        "Étaler dans le temps les nouveaux raccordements prévus sur ce transformateur.",
+        "Étudier un transfert durable d'une partie des abonnés vers un poste moins chargé.",
+    ],
+    "Défaut d'isolement (humidité)": [
+        "Éviter toute manœuvre sous tension tant que l'isolement n'est pas rétabli.",
+        "Prévoir une intervention hors période pluvieuse pour l'entretien du conservateur d'huile.",
+    ],
+}
+
+# ...et du type de poste (contraintes d'accès et d'intervention propres à chaque site).
+NETWORK_ACTIONS_BY_TYPE = {
+    "Cabine maçonnée": "Accès véhicule dégagé : une équipe peut intervenir rapidement, sans contrainte majeure.",
+    "Préfabriqué": "Prévenir les commerçants et usagers à proximité avant toute manœuvre : l'accès peut être encombré.",
+    "Haut de poteau": "Intervention en hauteur : mobiliser une nacelle et sécuriser le dégagement autour du poteau avant toute coupure.",
+}
+
+# Conditions météo simulables dans la section « Simulation de pannes » : bonus/malus
+# d'humidité relative appliqué à la météo de référence, et déclenchement ou non du
+# risque de foudre associé à l'orage.
+WEATHER_PRESETS = {
+    "☀️ Ciel dégagé (normal)": {"humidity_bonus": 0, "orage": False},
+    "🌧️ Pluie": {"humidity_bonus": 30, "orage": False},
+    "⛈️ Orage (pluie + foudre)": {"humidity_bonus": 35, "orage": True},
+    "🌬️ Fraîcheur / harmattan frais": {"humidity_bonus": -15, "orage": False},
+    "🔥 Canicule": {"humidity_bonus": -10, "orage": False},
+}
+
+# Sensibilité de chaque type de transformateur au climat ambiant : un poteau, exposé
+# directement à l'air libre et à la pluie, ressent bien plus l'effet de la chaleur, de
+# l'humidité et de la foudre qu'une cabine maçonnée qui protège mécaniquement l'appareil.
+TYPE_CLIMATE = {
+    "Cabine maçonnée": {"ambient_factor": 0.5, "humidity_factor": 0.35, "orage_voltage_bonus": 0.02},
+    "Préfabriqué": {"ambient_factor": 0.85, "humidity_factor": 0.7, "orage_voltage_bonus": 0.05},
+    "Haut de poteau": {"ambient_factor": 1.2, "humidity_factor": 1.0, "orage_voltage_bonus": 0.10},
+}
+
 RISK_BANDS = [(0, 35, "Faible", "🟢"), (35, 65, "Modéré", "🟠"), (65, 101, "Élevé", "🔴")]
 SECTIONS = ["🖐️ Mode manuel", "🎲 Simulation de pannes", "📋 État des transformateurs",
             "📈 Historique des pannes", "🌦️ Météo & prévisions", "🗺️ Carte du parc"]
@@ -214,6 +233,28 @@ def _heuristic_risk(f: dict, season_code: int) -> float:
     season_term = {0: 0, 1: 8, 2: 5, 3: 10}.get(season_code, 0)
     total = 8 + charge_term + oil_term + ambient_term + humidity_term + voltage_term + season_term
     return float(np.clip(total, 0, 100))
+
+
+def infer_dominant_failure(features: dict, baseline: dict):
+    """Détermine, à partir de l'écart entre les valeurs courantes et une situation
+    normale de référence, quelle panne (parmi FAILURE_MODES) se rapproche le plus de
+    l'état observé. Utilisé en mode manuel pour nommer le risque affiché."""
+    scores = {}
+    for label, mode in FAILURE_MODES.items():
+        effet = mode["effet"]
+        contrib, weight = 0.0, 0.0
+        for key, delta in effet.items():
+            if key not in features or key not in baseline or delta == 0:
+                continue
+            diff = features[key] - baseline[key]
+            contrib += diff / delta  # >0 si l'écart va dans le sens de cette panne
+            weight += 1.0
+        if weight > 0:
+            scores[label] = contrib / weight
+    if not scores:
+        return None, 0.0
+    best_label = max(scores, key=scores.get)
+    return best_label, scores[best_label]
 
 
 # ============================================================================
@@ -455,7 +496,8 @@ section = st.session_state.section
 if section == "🖐️ Mode manuel":
     st.subheader("Mode manuel — curseurs individuels par transformateur")
     st.caption("Une modification de curseur ne s'applique pas instantanément : la valeur "
-               "effective glisse progressivement vers la valeur choisie.")
+               "effective glisse progressivement vers la valeur choisie. Le risque affiché "
+               "est nommé selon le type de panne auquel la situation courante se rapproche le plus.")
 
     cols = st.columns(3)
     for col, t in zip(cols, TRANSFORMERS):
@@ -477,9 +519,23 @@ if section == "🖐️ Mode manuel":
             slope, trend_cat = compute_trend(t["id"])
             attn = attention_score(risk, slope)
             band_label, emoji = risk_band(attn)
-            log_event_if_needed(t["id"], t["nom"], band_label, risk, None)
 
-            st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
+            # Nom de la panne dominante à laquelle la situation courante ressemble le plus,
+            # calculé par écart à une situation de référence (charge/tension/T° huile normales).
+            baseline = {
+                "voltage": 1.0, "charge": 0.8,
+                "oil_temp": 45 + 0.8 * 28 + max(0, ambient_live - 30) * 0.6,
+                "humidity": humidity_live,
+            }
+            dominant_label, dominant_score = infer_dominant_failure(features, baseline)
+            if dominant_label and dominant_score > 0.15:
+                risk_title = f"Risque de {SHORT_FAILURE_LABELS[dominant_label]}"
+                log_event_if_needed(t["id"], t["nom"], band_label, risk, dominant_label)
+            else:
+                risk_title = "Risque global (aucune anomalie dominante)"
+                log_event_if_needed(t["id"], t["nom"], band_label, risk, None)
+
+            st.metric(risk_title, f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
             if trend_cat in ("en hausse rapide", "critique — hausse brutale"):
                 st.error(f"{emoji} **{band_label} — {trend_cat.upper()}** : priorité d'intervention.")
             elif band_label == "Élevé":
@@ -490,12 +546,29 @@ if section == "🖐️ Mode manuel":
                 st.success(f"{emoji} **Statut : {band_label}** ({trend_cat})")
 
 # ============================================================================
-# SECTION — SIMULATION DE PANNES (progression réaliste, alerte précoce)
+# SECTION — SIMULATION DE PANNES (progression différenciée + météo simulable)
 # ============================================================================
 elif section == "🎲 Simulation de pannes":
     st.subheader("Mode simulation — du fonctionnement normal à la panne, progressivement")
     st.caption("Le modèle détecte une dérive dès les premières secondes, bien avant que le "
-               "risque ne devienne critique : c'est cette anticipation qui est mise en avant ici.")
+               "risque ne devienne critique. À panne identique, la vitesse d'aggravation et les "
+               "actions recommandées diffèrent selon le type de poste (cabine, préfabriqué, poteau).")
+
+    st.markdown("#### 🌦️ Conditions climatiques simulées (communes aux 3 postes)")
+    wc1, wc2 = st.columns(2)
+    with wc1:
+        sim_temp = st.slider("Température ambiante simulée (°C)", 15, 50,
+                              int(round(np.clip(ambient_live, 15, 50))), 1, key="sim_temp_slider")
+    with wc2:
+        sim_weather_label = st.selectbox("Conditions météo simulées", list(WEATHER_PRESETS.keys()),
+                                          key="sim_weather_select")
+    weather = WEATHER_PRESETS[sim_weather_label]
+    st.caption(
+        "La température et le type de temps choisis ici remplacent la météo en direct le temps de "
+        "la simulation. Leur impact réel sur le transformateur (échauffement interne, humidité "
+        "perçue, risque de coup de foudre) dépend ensuite du type de poste : un poteau, exposé à "
+        "l'air libre, ressent le climat bien plus fortement qu'une cabine maçonnée protégée."
+    )
 
     cols = st.columns(3)
     for col, t in zip(cols, TRANSFORMERS):
@@ -518,7 +591,21 @@ elif section == "🎲 Simulation de pannes":
                     st.session_state.sim_start_time[t["id"]] = time.time()
 
             active_failure = st.session_state.sim_failure.get(t["id"])
-            base = {"charge": 0.8, "oil_temp": 60.0, "voltage": 1.0}
+            climate = TYPE_CLIMATE.get(t["type"], {"ambient_factor": 1.0, "humidity_factor": 1.0, "orage_voltage_bonus": 0.0})
+
+            # Impact du climat simulé sur ce type de poste précisément : la chaleur ambiante ne
+            # se traduit pas de la même façon en T° huile selon l'exposition, l'humidité ressentie
+            # varie aussi, et un orage induit une surtension d'autant plus marquée que le poste
+            # est exposé (poteau) plutôt que protégé (cabine maçonnée).
+            oil_temp_climate_add = max(0.0, sim_temp - 30) * 0.6 * climate["ambient_factor"]
+            humidity_climate = float(np.clip(humidity_live + weather["humidity_bonus"] * climate["humidity_factor"], 5, 100))
+            voltage_climate_add = climate["orage_voltage_bonus"] if weather["orage"] else 0.0
+
+            base = {
+                "charge": 0.8,
+                "oil_temp": 45 + 0.8 * 28 + oil_temp_climate_add,
+                "voltage": 1.0 + voltage_climate_add,
+            }
 
             if active_failure:
                 start = st.session_state.sim_start_time.get(t["id"])
@@ -529,17 +616,20 @@ elif section == "🎲 Simulation de pannes":
                     start = time.time()
                     st.session_state.sim_start_time[t["id"]] = start
                 elapsed = max(0.0, time.time() - start)
-                progress = 1 - math.exp(-elapsed / FAILURE_TIME_CONSTANT)
+                # Constante de temps propre au type de poste : à panne strictement identique,
+                # un poteau exposé atteint l'état critique plus vite qu'une cabine protégée.
+                effective_time_constant = FAILURE_TIME_CONSTANT * TYPE_TIME_FACTOR.get(t["type"], 1.0)
+                progress = 1 - math.exp(-elapsed / effective_time_constant)
                 effet = FAILURE_MODES[active_failure]["effet"]
                 charge = base["charge"] + effet.get("charge", 0) * progress
                 oil_temp = base["oil_temp"] + effet.get("oil_temp", 0) * progress
                 voltage = base["voltage"] + effet.get("voltage", 0) * progress
-                humidity_adj = humidity_live + effet.get("humidity", 0) * progress
-                ambient_adj = ambient_live + effet.get("ambient", 0) * progress
+                humidity_adj = humidity_climate + effet.get("humidity", 0) * progress
+                ambient_adj = sim_temp + effet.get("ambient", 0) * progress
             else:
                 progress = 0.0
                 charge, oil_temp, voltage = base["charge"], base["oil_temp"], base["voltage"]
-                humidity_adj, ambient_adj = humidity_live, ambient_live
+                humidity_adj, ambient_adj = humidity_climate, sim_temp
 
             features = {"charge": charge, "oil_temp": oil_temp, "ambient": ambient_adj,
                         "humidity": humidity_adj, "voltage": voltage, "season_label": "Saison sèche chaude"}
@@ -551,6 +641,8 @@ elif section == "🎲 Simulation de pannes":
             log_event_if_needed(t["id"], t["nom"], band_label, risk, active_failure)
 
             st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
+            st.caption(f"🌡️ T° huile estimée : {oil_temp:.1f} °C · 💧 Humidité perçue : {humidity_adj:.0f} %"
+                       + (" · ⚡ orage actif" if weather["orage"] else ""))
 
             if active_failure:
                 st.progress(min(1.0, progress), text=f"Progression de la panne : {progress*100:.0f} %")
@@ -558,8 +650,9 @@ elif section == "🎲 Simulation de pannes":
                 getattr(st, phase_kind)(f"{phase_label} — {phase_text}")
                 st.markdown(f"**Pronostic :** {prognosis_text(risk, slope, active_failure)}")
                 st.markdown("**Actions réseau recommandées :**")
-                st.markdown("- Soulager le réseau en reportant une partie de la charge sur un poste voisin si possible.")
-                st.markdown("- Vérifier et informer les clients connectés en aval de ce transformateur.")
+                for action in NETWORK_ACTIONS_BY_FAILURE.get(active_failure, []):
+                    st.markdown(f"- {action}")
+                st.markdown(f"- {NETWORK_ACTIONS_BY_TYPE.get(t['type'], '')}")
                 with st.expander("🩺 Diagnostic et directives correctives ciblées"):
                     for d in FAILURE_MODES[active_failure]["directives"]:
                         st.markdown(f"- {d}")
@@ -644,7 +737,9 @@ elif section == "🌦️ Météo & prévisions":
     st.plotly_chart(fig, use_container_width=True)
     st.caption(f"L'indice de forte chaleur est une estimation interne fondée sur l'écart entre la "
                f"température maximale prévue et le seuil de vigilance retenu ({HEAT_ALERT_THRESHOLD:.0f} °C) ; "
-               "la probabilité de pluie provient directement des prévisions météorologiques.")
+               "la probabilité de pluie provient directement des prévisions météorologiques. Pour tester "
+               "l'impact du climat sur un transformateur précis, utilisez les curseurs météo de la section "
+               "« Simulation de pannes ».")
 
 # ============================================================================
 # SECTION — CARTE DU PARC
@@ -675,10 +770,17 @@ elif section == "🗺️ Carte du parc":
     df_parc["radius"] = 120 + df_parc["attn"] * 3
     layer = pdk.Layer("ScatterplotLayer", data=df_parc, get_position="[lon, lat]",
                        get_fill_color="color", get_radius="radius", pickable=True)
-    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=11.5, pitch=0)
+    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=12.5, pitch=0)
     tooltip = {"text": "{Nom} ({Type}) — {Quartier}\nRisque : {Risque (%)} % — {Statut}"}
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip,
-                              map_style="mapbox://styles/mapbox/light-v9"))
+    # Fond de carte routier (rues, quartiers, repères), plus lisible et réaliste qu'un simple
+    # fond clair : ne nécessite pas de jeton Mapbox (rendu via les tuiles Carto de pydeck).
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        tooltip=tooltip,
+        map_provider="carto",
+        map_style="road",
+    ))
 
     st.markdown("**Obstacles et contraintes d'accès relevés autour de chaque poste :**")
     for t in TRANSFORMERS:
@@ -687,9 +789,10 @@ elif section == "🗺️ Carte du parc":
                 st.markdown(f"- {o}")
 
 st.caption(
-    "⚠️ Application de démonstration : les grandeurs électriques du mode manuel et les pannes du "
-    "mode simulation sont générées par l'application ; la météo est récupérée en direct lorsque "
-    "la connexion le permet, avec un repli saisonnier sinon."
+    "⚠️ Application de démonstration : les grandeurs électriques du mode manuel, les pannes du "
+    "mode simulation et la météo simulée sont générées par l'application ; la météo affichée en "
+    "en-tête et dans l'onglet dédié est récupérée en direct lorsque la connexion le permet, avec "
+    "un repli saisonnier sinon."
 )
 
 # ============================================================================
