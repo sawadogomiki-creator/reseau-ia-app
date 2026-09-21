@@ -176,7 +176,12 @@ TYPE_CLIMATE = {
     "Haut de poteau": {"ambient_factor": 1.2, "humidity_factor": 1.0, "orage_voltage_bonus": 0.10},
 }
 
-RISK_BANDS = [(0, 35, "Faible", "🟢"), (35, 65, "Modéré", "🟠"), (65, 101, "Élevé", "🔴")]
+RISK_BANDS = [
+    (0, 35, "Faible", "🟢"),
+    (35, 50, "Modéré", "🟠"),
+    (50, 65, "Vigilance avancée", "🟡"),
+    (65, 101, "Élevé", "🔴"),
+]
 SECTIONS = ["🖐️ Mode manuel", "🎲 Simulation de pannes", "📋 État des transformateurs",
             "📈 Historique des pannes", "🌦️ Météo & prévisions", "🗺️ Carte du parc"]
 
@@ -442,6 +447,22 @@ def log_event_if_needed(t_id, nom, band_label, risk, panne_label):
             st.session_state.active_event[t_id] = None
 
 
+def get_failure_progress(t_id, ttype):
+    """Lecture (sans effet de bord) de la panne simulée en cours pour ce transformateur,
+    utilisée par la section « État des transformateurs » pour refléter l'état actuel de
+    la simulation, quelle que soit la section affichée à l'écran."""
+    active = st.session_state.sim_failure.get(t_id)
+    if not active:
+        return None, 0.0
+    start = st.session_state.sim_start_time.get(t_id)
+    if start is None:
+        return active, 0.0
+    elapsed = max(0.0, time.time() - start)
+    effective_time_constant = FAILURE_TIME_CONSTANT * TYPE_TIME_FACTOR.get(ttype, 1.0)
+    progress = 1 - math.exp(-elapsed / effective_time_constant)
+    return active, progress
+
+
 # ============================================================================
 # INITIALISATION + EN-TÊTE (horloge « comme une montre » + météo commune)
 # ============================================================================
@@ -540,6 +561,8 @@ if section == "🖐️ Mode manuel":
                 st.error(f"{emoji} **{band_label} — {trend_cat.upper()}** : priorité d'intervention.")
             elif band_label == "Élevé":
                 st.error(f"{emoji} **Statut : {band_label}**")
+            elif band_label == "Vigilance avancée":
+                st.warning(f"{emoji} **Statut : {band_label}** — surveillance renforcée recommandée ({trend_cat})")
             elif band_label == "Modéré":
                 st.warning(f"{emoji} **Statut : {band_label}** ({trend_cat})")
             else:
@@ -679,15 +702,19 @@ elif section == "📋 État des transformateurs":
         risk = last["risk"] if last else 0.0
         attn = attention_score(risk, slope)
         band_label, emoji = risk_band(attn)
+        active_failure, progress = get_failure_progress(t["id"], t["type"])
         rows.append({
             "N°": t["id"], "Nom": t["nom"], "Type": t["type"], "Quartier": t["quartier"],
             "Charge": f"{last['charge']:.2f}" if last else "—",
             "T° huile (°C)": f"{last['oil_temp']:.1f}" if last else "—",
             "Tension (p.u.)": f"{last['voltage']:.2f}" if last else "—",
             "Risque (%)": round(risk, 1), "Tendance": trend_cat, "Statut": f"{emoji} {band_label}",
+            "Panne simulée": active_failure or "Aucune",
+            "Progression panne (%)": round(progress * 100, 1) if active_failure else "—",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption("Ce tableau reflète l'état le plus récent calculé dans les sections Mode manuel et Simulation.")
+    st.caption("Ce tableau reflète l'état le plus récent calculé dans les sections Mode manuel et Simulation, "
+               "y compris la panne actuellement simulée sur chaque poste et sa progression, s'il y en a une en cours.")
 
 # ============================================================================
 # SECTION — HISTORIQUE DES PANNES
@@ -760,17 +787,22 @@ elif section == "🗺️ Carte du parc":
     st.dataframe(df_parc.drop(columns=["lat", "lon", "attn"]), use_container_width=True, hide_index=True)
 
     def color_for(attn):
+        # Rouge = Élevé, Jaune = Modéré / Vigilance avancée, Vert = Faible — mêmes seuils que RISK_BANDS.
         if attn >= 65:
-            return [220, 40, 40, 200]
+            return [220, 40, 40, 230]
         if attn >= 35:
-            return [240, 160, 30, 200]
-        return [40, 160, 70, 200]
+            return [240, 200, 30, 230]
+        return [40, 160, 70, 230]
 
     df_parc["color"] = df_parc["attn"].apply(color_for)
-    df_parc["radius"] = 120 + df_parc["attn"] * 3
-    layer = pdk.Layer("ScatterplotLayer", data=df_parc, get_position="[lon, lat]",
-                       get_fill_color="color", get_radius="radius", pickable=True)
-    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=12.5, pitch=0)
+    # Petit point fixe posé sur l'emplacement du poste (et non une zone qui grossit avec le
+    # risque) : seule sa couleur change, pour un rendu plus proche d'un repère sur une carte réelle.
+    layer = pdk.Layer(
+        "ScatterplotLayer", data=df_parc, get_position="[lon, lat]",
+        get_fill_color="color", get_radius=35, radius_min_pixels=6, radius_max_pixels=14,
+        stroked=True, get_line_color=[30, 30, 30, 220], line_width_min_pixels=1, pickable=True,
+    )
+    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=13.5, pitch=0)
     tooltip = {"text": "{Nom} ({Type}) — {Quartier}\nRisque : {Risque (%)} % — {Statut}"}
     # Fond de carte routier (rues, quartiers, repères), plus lisible et réaliste qu'un simple
     # fond clair : ne nécessite pas de jeton Mapbox (rendu via les tuiles Carto de pydeck).
