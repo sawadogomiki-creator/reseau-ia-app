@@ -1,6 +1,3 @@
-Voici le **code complet directement copiable** :
-
-```
 import os
 import time
 import math
@@ -2648,5 +2645,4 @@ if st.session_state.running:
     time.sleep(1)
 
     st.rerun()
-```
 
