@@ -31,7 +31,55 @@ ANIMATION_STEP = 0.18
 OUAGA_LAT, OUAGA_LON = 12.3714, -1.5197
 FAILURE_TIME_CONSTANT = 90.0   # secondes — vitesse d'installation d'une panne simulée
 HEAT_ALERT_THRESHOLD = 38.0    # °C — seuil utilisé pour l'indice de risque de forte chaleur
+WEATHER_MODES = {
+    "☀️ Temps normal": {
+        "humidity_factor": 1.00,
+        "heat_factor": 1.00,
+        "storm_factor": 0.00,
+        "rain_factor": 0.00,
+        "wind_factor": 1.00
+    },
 
+    "🥵 Forte chaleur": {
+        "humidity_factor": 0.85,
+        "heat_factor": 1.40,
+        "storm_factor": 0.00,
+        "rain_factor": 0.00,
+        "wind_factor": 1.00
+    },
+
+    "🌧️ Pluie": {
+        "humidity_factor": 1.25,
+        "heat_factor": 0.90,
+        "storm_factor": 0.10,
+        "rain_factor": 1.30,
+        "wind_factor": 1.00
+    },
+
+    "⛈️ Orage": {
+        "humidity_factor": 1.35,
+        "heat_factor": 1.00,
+        "storm_factor": 1.80,
+        "rain_factor": 1.50,
+        "wind_factor": 1.30
+    },
+
+    "💨 Harmattan": {
+        "humidity_factor": 0.65,
+        "heat_factor": 1.15,
+        "storm_factor": 0.00,
+        "rain_factor": 0.00,
+        "wind_factor": 1.25
+    },
+
+    "❄️ Fraîcheur": {
+        "humidity_factor": 1.10,
+        "heat_factor": 0.65,
+        "storm_factor": 0.00,
+        "rain_factor": 0.00,
+        "wind_factor": 0.90
+    }
+}
 TRANSFORMERS = [
     {
         "id": 1, "nom": "TR-01", "type": "Cabine maçonnée",
