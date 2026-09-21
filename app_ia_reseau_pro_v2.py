@@ -635,6 +635,14 @@ def init_state():
             for t in TRANSFORMERS
         },
 
+        # Données strictement internes au mode simulation.
+        # Elles ne sont jamais utilisées par le tableau de bord,
+        # le mode manuel, l'état des transformateurs ou la carte.
+        "simulation_history": lambda: {
+            t["id"]: deque(maxlen=HISTORY_LEN)
+            for t in TRANSFORMERS
+        },
+
         "manual_target": lambda: {
             t["id"]: {
                 "voltage": 1.0,
@@ -670,8 +678,11 @@ def init_state():
             for t in TRANSFORMERS
         },
 
-        # État persistant utilisé notamment par la carte
+        # État opérationnel utilisé par les pages hors simulation.
         "last_status": create_last_status,
+
+        # État strictement isolé du mode simulation.
+        "simulation_status": create_last_status,
     }
 
     for key, default in defaults.items():
@@ -730,6 +741,17 @@ def init_state():
     if "last_status" not in st.session_state:
 
         st.session_state.last_status = create_last_status()
+
+    if "simulation_status" not in st.session_state:
+
+        st.session_state.simulation_status = create_last_status()
+
+    if "simulation_history" not in st.session_state:
+
+        st.session_state.simulation_history = {
+            t["id"]: deque(maxlen=HISTORY_LEN)
+            for t in TRANSFORMERS
+        }
 
     for t in TRANSFORMERS:
 
@@ -806,6 +828,56 @@ def compute_trend(t_id):
         cat = "critique — hausse brutale"
 
     return float(slope), cat
+
+def push_simulation_history(t_id, risk_pct, features):
+    """Historique privé au mode simulation."""
+    st.session_state.simulation_history[t_id].append(
+        {
+            "t": datetime.now(),
+            "risk": risk_pct,
+            **features,
+        }
+    )
+
+def compute_simulation_trend(t_id):
+    """Tendance calculée uniquement sur l'historique simulé."""
+    hist = st.session_state.simulation_history[t_id]
+    if len(hist) < 3:
+        return 0.0, "stable"
+    recent = list(hist)[-12:]
+    t0 = recent[0]["t"]
+    xs = [(p["t"] - t0).total_seconds() / 60.0 for p in recent]
+    ys = [p["risk"] for p in recent]
+    if xs[-1] - xs[0] < 1e-6:
+        return 0.0, "stable"
+    slope = np.polyfit(xs, ys, 1)[0]
+    if slope < 0.5:
+        cat = "stable"
+    elif slope < 2.5:
+        cat = "en hausse"
+    elif slope < 6:
+        cat = "en hausse rapide"
+    else:
+        cat = "critique — hausse brutale"
+    return float(slope), cat
+
+def update_simulation_status(
+    t_id, risk, slope, trend_cat, band_label, emoji,
+    failure=None, progress=0.0, features=None, source="Simulation + XGBoost"
+):
+    """Met à jour uniquement l'état interne de la simulation."""
+    st.session_state.simulation_status[t_id] = {
+        "risk": float(risk),
+        "attention": float(risk),
+        "trend": float(slope),
+        "trend_cat": trend_cat,
+        "status": band_label,
+        "emoji": emoji,
+        "source": source,
+        "failure": failure,
+        "progress": float(progress),
+        "features": features or {},
+    }
 
 def update_last_status(
     t_id,
@@ -1768,11 +1840,11 @@ elif section == "🎲 Simulation de pannes":
         "Simulation — évolution progressive vers la panne"
     )
 
-    st.warning(
-        "⚠️ **Mode simulation pédagogique** : la progression d'une panne "
-        "est calculée par une courbe temporelle et des facteurs climatiques. "
-        "Elle n'utilise pas la prédiction XGBoost. Le mode manuel, lui, "
-        "utilise XGBoost si `modele_xgboost.pkl` est disponible."
+    st.info(
+        "🧠 **Moteur de risque : XGBoost**. La panne simulée fait évoluer "
+        "progressivement les grandeurs physiques (charge, température, tension, "
+        "humidité), puis XGBoost recalcule le risque à chaque rafraîchissement. "
+        "Les données de simulation restent isolées des autres pages."
     )
     st.caption(
         "Lorsqu'une panne est sélectionnée, le risque commence près de 0 % "
@@ -1901,7 +1973,7 @@ elif section == "🎲 Simulation de pannes":
 
                     # Retour à un état initial
                     # proche de 0 %
-                    update_last_status(
+                    update_simulation_status(
                         t["id"],
                         2.0,
                         0.0,
@@ -1926,7 +1998,7 @@ elif section == "🎲 Simulation de pannes":
 
                     # Une nouvelle panne commence
                     # à presque 0 %.
-                    update_last_status(
+                    update_simulation_status(
                         t["id"],
                         2.0,
                         0.0,
@@ -2132,119 +2204,49 @@ elif section == "🎲 Simulation de pannes":
             }
 
             # ----------------------------------------------------------------
-            # CALCUL DU RISQUE DE SIMULATION
+            # CALCUL DU RISQUE — XGBOOST
             # ----------------------------------------------------------------
 
-            if active_failure is None:
+            # Même moteur de prédiction que le mode manuel.
+            # La simulation ne fabrique plus directement un pourcentage
+            # de risque avec progress**1.55.
+            model_features = {
+                "charge": charge,
+                "oil_temp": oil_temp,
+                "ambient": ambient_adj,
+                "humidity": humidity_adj,
+                "voltage": voltage,
+                "season_label": "Saison sèche chaude",
+            }
 
-                # Fonctionnement normal :
-                # risque proche de zéro.
-                risk = 2.0
+            risk = predict_risk(
+                model_features,
+                t["type"],
+            )
 
-                climate_stress = 0.0
+            # Bonus climatique conservé comme facteur de contexte.
+            climate_bonus = 0.0
+            if sim_temp > 35:
+                climate_bonus += (sim_temp - 35) * 0.7 * climate["ambient_factor"]
+            if humidity_adj > 75:
+                climate_bonus += (humidity_adj - 75) * 0.10 * climate["humidity_factor"]
+            if weather["orage"]:
+                climate_bonus += 5.0 * climate["ambient_factor"]
 
-                if sim_temp >= 38:
-
-                    climate_stress += min(
-                        (
-                            sim_temp - 38
-                        )
-                        * 0.35,
-                        3.0,
-                    )
-
-                if humidity_adj >= 85:
-
-                    climate_stress += min(
-                        (
-                            humidity_adj - 85
-                        )
-                        * 0.05,
-                        2.0,
-                    )
-
-                risk = float(
-                    np.clip(
-                        risk
-                        + climate_stress,
-                        0,
-                        10,
-                    )
-                )
-
-            else:
-
-                # Courbe progressive.
-                #
-                # Au début :
-                # progress = 0 -> risque ≈ 2 %
-                #
-                # Puis la montée accélère.
-                #
-                progress_risk = (
-                    100
-                    * (
-                        progress
-                        ** 1.55
-                    )
-                )
-
-                climate_bonus = 0.0
-
-                if sim_temp > 35:
-
-                    climate_bonus += (
-                        (
-                            sim_temp - 35
-                        )
-                        * 0.7
-                        * climate[
-                            "ambient_factor"
-                        ]
-                    )
-
-                if humidity_adj > 75:
-
-                    climate_bonus += (
-                        (
-                            humidity_adj - 75
-                        )
-                        * 0.10
-                        * climate[
-                            "humidity_factor"
-                        ]
-                    )
-
-                if weather["orage"]:
-
-                    climate_bonus += (
-                        5.0
-                        * climate[
-                            "ambient_factor"
-                        ]
-                    )
-
-                risk = float(
-                    np.clip(
-                        progress_risk
-                        + climate_bonus,
-                        0,
-                        100,
-                    )
-                )
+            risk = float(np.clip(risk + climate_bonus, 0, 100))
 
             # ----------------------------------------------------------------
             # HISTORIQUE
             # ----------------------------------------------------------------
 
-            push_history(
+            push_simulation_history(
                 t["id"],
                 risk,
                 features,
             )
 
             slope, trend_cat = (
-                compute_trend(
+                compute_simulation_trend(
                     t["id"]
                 )
             )
@@ -2257,7 +2259,7 @@ elif section == "🎲 Simulation de pannes":
             # SAUVEGARDE ÉTAT POUR LA CARTE
             # ----------------------------------------------------------------
 
-            update_last_status(
+            update_simulation_status(
                 t["id"],
                 risk,
                 slope,
@@ -2270,13 +2272,6 @@ elif section == "🎲 Simulation de pannes":
                 features=features,
             )
 
-            log_event_if_needed(
-                t["id"],
-                t["nom"],
-                band_label,
-                risk,
-                active_failure,
-            )
 
             # ----------------------------------------------------------------
             # AFFICHAGE RISQUE
