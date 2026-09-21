@@ -223,21 +223,42 @@ def get_weekly_forecast():
 # ============================================================================
 
 def init_state():
-    if "initialized" in st.session_state:
-        return
-    st.session_state.initialized = True
-    st.session_state.running = True
-    st.session_state.section = SECTIONS[0]
-    st.session_state.history = {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS}
+    """Initialise chaque clé de session individuellement (plutôt qu'un seul drapeau global) :
+    si une session existante (ouverte avant une mise à jour du code) n'a pas encore telle ou
+    telle clé, elle est comblée ici sans jamais écraser une valeur déjà en cours d'utilisation."""
+    defaults = {
+        "running": True,
+        "section": SECTIONS[0],
+        "history": lambda: {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS},
+        "manual_target": lambda: {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS},
+        "manual_effective": lambda: {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS},
+        "sim_failure": lambda: {t["id"]: None for t in TRANSFORMERS},
+        "sim_start_time": lambda: {t["id"]: None for t in TRANSFORMERS},
+        "event_log": list,
+        "active_event": lambda: {t["id"]: None for t in TRANSFORMERS},
+    }
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default() if callable(default) else default
 
-    st.session_state.manual_target = {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS}
-    st.session_state.manual_effective = {t["id"]: {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8} for t in TRANSFORMERS}
-
-    st.session_state.sim_failure = {t["id"]: None for t in TRANSFORMERS}
-    st.session_state.sim_start_time = {t["id"]: None for t in TRANSFORMERS}
-
-    st.session_state.event_log = []          # historique des épisodes à risque élevé
-    st.session_state.active_event = {t["id"]: None for t in TRANSFORMERS}
+    # Filet de sécurité supplémentaire : si TRANSFORMERS évolue (ajout d'un poste) alors
+    # qu'une session est déjà ouverte, on complète les sous-dictionnaires par transformateur
+    # plutôt que de laisser un KeyError se produire lors d'un accès à un identifiant absent.
+    per_transfo_defaults = {
+        "manual_target": {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8},
+        "manual_effective": {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8},
+        "sim_failure": None,
+        "sim_start_time": None,
+        "active_event": None,
+    }
+    for key, default_value in per_transfo_defaults.items():
+        for t in TRANSFORMERS:
+            st.session_state[key].setdefault(
+                t["id"], dict(default_value) if isinstance(default_value, dict) else default_value
+            )
+    for t in TRANSFORMERS:
+        if t["id"] not in st.session_state.history:
+            st.session_state.history[t["id"]] = deque(maxlen=HISTORY_LEN)
 
 
 def animate_towards_target(t_id):
