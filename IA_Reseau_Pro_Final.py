@@ -57,6 +57,7 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 { color:
 .page-header { background:linear-gradient(90deg,#0a448d,#18a8d8); color:white; border-radius:14px; padding:15px 20px; margin-bottom:18px; box-shadow:0 5px 16px rgba(10,68,141,.18); }
 .page-header h2 { margin:0; color:white; }
 .page-header p { margin:4px 0 0; opacity:.88; }
+.page-runtime-marker{display:none;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1534,6 +1535,7 @@ with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs")
 section = st.session_state.section
 
 # Routage exclusif : une seule page de contenu est rendue à chaque exécution.
+# IMPORTANT : le contenu d'une page ne doit jamais être appelé par une autre page.
 PAGE_META = {
     "🏠 Tableau de bord": ("🏠 TABLEAU DE BORD", "Vue globale du parc et indicateurs de supervision."),
     "🖐️ Mode manuel": ("🖐️ MODE MANUEL", "Réglage des grandeurs électriques et des conditions ambiantes."),
@@ -3098,15 +3100,31 @@ SECTION_RENDERERS = {
     "🌦️ Météo & prévisions": render_weather,
     "🗺️ Carte du parc": render_map,
 }
-current_renderer = SECTION_RENDERERS.get(st.session_state.section, render_dashboard)
-current_renderer()
+
+def render_active_page():
+    """Routeur strict : UNE et une seule fonction de page est exécutée."""
+    active = st.session_state.get("section", "🏠 Tableau de bord")
+    renderer = SECTION_RENDERERS.get(active)
+    if renderer is None:
+        active = "🏠 Tableau de bord"
+        st.session_state.section = active
+        renderer = SECTION_RENDERERS[active]
+
+    # Marqueur technique volontairement visible pour vérifier la version déployée.
+    st.markdown(
+        f'<div class="page-runtime-marker">PAGE ACTIVE : {active}</div>',
+        unsafe_allow_html=True,
+    )
+    renderer()
+
+render_active_page()
 
 # ============================================================================
 # BARRE D'ÉTAT INFÉRIEURE — STYLE LOGICIEL PC
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.1</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.2 — ROUTAGE SÉPARÉ</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
