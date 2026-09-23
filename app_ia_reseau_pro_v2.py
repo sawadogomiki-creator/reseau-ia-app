@@ -51,6 +51,9 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 { color:
 .section-banner h2 { margin:0; font-size:21px; }
 .section-banner p { margin:3px 0 0; opacity:.86; font-size:12px; }
 .report-box { background:linear-gradient(135deg,#eaf6ff,#f7fbff); border:1px solid #b9d9ef; border-left:5px solid #138bd1; border-radius:12px; padding:14px 16px; }
+.page-header { background:linear-gradient(90deg,#0a448d,#18a8d8); color:white; border-radius:14px; padding:15px 20px; margin-bottom:18px; box-shadow:0 5px 16px rgba(10,68,141,.18); }
+.page-header h2 { margin:0; color:white; }
+.page-header p { margin:4px 0 0; opacity:.88; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -270,6 +273,13 @@ WEATHER_PRESETS = {
         "humidity_bonus": -10,
         "orage": False,
     },
+}
+
+SEASON_PRESETS = {
+    "Saison sèche fraîche": {"temp_ref": 28, "humidity": 30},
+    "Saison sèche chaude": {"temp_ref": 38, "humidity": 25},
+    "Harmattan": {"temp_ref": 31, "humidity": 20},
+    "Saison des pluies": {"temp_ref": 30, "humidity": 75},
 }
 
 TYPE_TIME_FACTOR = {
@@ -585,6 +595,21 @@ def local_risk_sensitivity(features, ttype):
     return df
 
 
+def render_temperature_gauge(temp, label="Température ambiante"):
+    value = float(np.clip(temp, 15, 50))
+    pct = (value - 15) / 35
+    if value < 30:
+        state, icon = "Zone fraîche", "🟢"
+    elif value < 35:
+        state, icon = "Zone normale", "🟡"
+    elif value < 40:
+        state, icon = "Chaleur élevée", "🟠"
+    else:
+        state, icon = "Très forte chaleur", "🔴"
+    st.markdown(f"**🌡️ {label} : {value:.1f} °C** · {icon} {state}")
+    st.progress(pct, text=f"15 °C    ─────────────    50 °C   |   {value:.1f} °C")
+
+
 def build_intervention_report():
     """Rapport détaillé fondé exclusivement sur l'état du mode simulation."""
     now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -736,6 +761,10 @@ def init_state():
             }
             for t in TRANSFORMERS
         },
+        "manual_temperature": 32.0,
+        "manual_season": "Saison sèche chaude",
+        "simulation_temperature": 32.0,
+        "simulation_season": "Saison sèche chaude",
 
         "sim_failure": lambda: {
             t["id"]: None
@@ -813,6 +842,9 @@ def init_state():
             st.session_state.history[
                 t["id"]
             ] = deque(maxlen=HISTORY_LEN)
+
+        if t["id"] not in st.session_state.simulation_history:
+            st.session_state.simulation_history[t["id"]] = deque(maxlen=HISTORY_LEN)
 
     if "last_status" not in st.session_state:
 
@@ -1510,11 +1542,20 @@ with s2: st.markdown(f"**Moteur :** {model_label}")
 with s3: st.markdown(f"**Heure :** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs")
 
-# Une seule fenêtre comparative, disponible depuis l'interface générale.
-with st.expander("📋 Référence du parc — types et vulnérabilités"):
-    st.table(pd.DataFrame([{"Type":t["type"],"Quartier":t["quartier"],"Vulnérabilité":t["vulnerabilite"]} for t in TRANSFORMERS]))
-
 section = st.session_state.section
+
+# Routage exclusif : une seule page de contenu est rendue à chaque exécution.
+PAGE_META = {
+    "🏠 Tableau de bord": ("🏠 TABLEAU DE BORD", "Vue globale du parc et indicateurs de supervision."),
+    "🖐️ Mode manuel": ("🖐️ MODE MANUEL", "Réglage des grandeurs électriques et des conditions ambiantes."),
+    "🎲 Simulation de pannes": ("🎲 SIMULATION DE PANNES", "Scénarios de panne, progression, risques et conduite à tenir."),
+    "📋 État des transformateurs": ("📋 ÉTAT DES TRANSFORMATEURS", "État courant des trois transformateurs surveillés."),
+    "📈 Historique des pannes": ("📈 HISTORIQUE DES PANNES", "Épisodes enregistrés et évolution des risques."),
+    "🌦️ Météo & prévisions": ("🌦️ MÉTÉO & PRÉVISIONS", "Conditions actuelles et prévisions utiles à la supervision."),
+    "🗺️ Carte du parc": ("🗺️ CARTE DU PARC", "Localisation et niveau de risque des transformateurs."),
+}
+page_title, page_subtitle = PAGE_META.get(section, PAGE_META[SECTIONS[0]])
+st.markdown(f'<div class="page-header"><h2>{page_title}</h2><p>{page_subtitle}</p></div>', unsafe_allow_html=True)
 
 # ============================================================================
 # SECTION 0 — TABLEAU DE BORD
@@ -1690,11 +1731,21 @@ elif section == "🖐️ Mode manuel":
     )
 
     st.caption(
-        "Ce mode permet de modifier indépendamment "
-        "les grandeurs électriques des transformateurs. "
-        "Les pannes simulées sont disponibles uniquement "
-        "dans la section « Simulation de pannes »."
+        "Ce mode permet de modifier les grandeurs électriques et les conditions ambiantes. "
+        "Les scénarios de panne sont réservés exclusivement à la page « Simulation de pannes »."
     )
+
+    st.markdown("### 🌡️ Conditions ambiantes du mode manuel")
+    mc1, mc2 = st.columns([1.5, 1.0])
+    with mc1:
+        manual_temp = st.slider("Température ambiante (°C)", 15.0, 50.0, float(st.session_state.manual_temperature), 0.5, key="manual_temperature_slider")
+        st.session_state.manual_temperature = manual_temp
+        render_temperature_gauge(manual_temp)
+    with mc2:
+        season_options = list(SEASON_PRESETS.keys())
+        manual_season = st.selectbox("Type de saison", season_options, index=season_options.index(st.session_state.manual_season), key="manual_season_select")
+        st.session_state.manual_season = manual_season
+        st.info(f"🌦️ **{manual_season}**\n\nHumidité de référence : **{SEASON_PRESETS[manual_season]['humidity']} %**")
 
     cols = st.columns(3)
 
@@ -1759,7 +1810,7 @@ elif section == "🖐️ Mode manuel":
                 + eff["charge"] * 28
                 + max(
                     0,
-                    ambient_live - 30,
+                    manual_temp - 30,
                 )
                 * 0.6
             )
@@ -1767,12 +1818,10 @@ elif section == "🖐️ Mode manuel":
             features = {
                 "charge": eff["charge"],
                 "oil_temp": oil_temp,
-                "ambient": ambient_live,
-                "humidity": humidity_live,
+                "ambient": manual_temp,
+                "humidity": float(SEASON_PRESETS[manual_season]["humidity"]),
                 "voltage": eff["voltage"],
-                "season_label": (
-                    "Saison sèche chaude"
-                ),
+                "season_label": manual_season,
             }
 
             risk = predict_risk(
@@ -1896,29 +1945,20 @@ elif section == "🎲 Simulation de pannes":
         "#### 🌦️ Conditions climatiques simulées"
     )
 
-    wc1, wc2 = st.columns(2)
+    wc1, wc2, wc3 = st.columns([1.15, 1.0, 1.0])
 
     with wc1:
-
-        sim_temp = st.slider(
-            "Température ambiante simulée (°C)",
-            15,
-            50,
-            int(
-                round(
-                    np.clip(
-                        ambient_live,
-                        15,
-                        50,
-                    )
-                )
-            ),
-            1,
-            key="sim_temp_slider",
-        )
+        sim_temp = st.slider("Température ambiante simulée (°C)", 15.0, 50.0, float(st.session_state.simulation_temperature), 0.5, key="sim_temp_slider")
+        st.session_state.simulation_temperature = sim_temp
+        render_temperature_gauge(sim_temp, "Température simulée")
 
     with wc2:
+        season_options = list(SEASON_PRESETS.keys())
+        sim_season = st.selectbox("Type de saison simulé", season_options, index=season_options.index(st.session_state.simulation_season), key="sim_season_select")
+        st.session_state.simulation_season = sim_season
+        st.info(f"🌦️ **{sim_season}**\n\nHumidité de référence : **{SEASON_PRESETS[sim_season]['humidity']} %**")
 
+    with wc3:
         sim_weather_label = st.selectbox(
             "Conditions météo simulées",
             list(
@@ -2079,7 +2119,7 @@ elif section == "🎲 Simulation de pannes":
 
             humidity_climate = float(
                 np.clip(
-                    humidity_live
+                    SEASON_PRESETS[sim_season]["humidity"]
                     + weather[
                         "humidity_bonus"
                     ]
@@ -2234,9 +2274,7 @@ elif section == "🎲 Simulation de pannes":
                 "ambient": ambient_adj,
                 "humidity": humidity_adj,
                 "voltage": voltage,
-                "season_label": (
-                    "Saison sèche chaude"
-                ),
+                "season_label": sim_season,
             }
 
             # ----------------------------------------------------------------
@@ -2252,7 +2290,7 @@ elif section == "🎲 Simulation de pannes":
                 "ambient": ambient_adj,
                 "humidity": humidity_adj,
                 "voltage": voltage,
-                "season_label": "Saison sèche chaude",
+                "season_label": sim_season,
             }
 
             risk = predict_risk(
