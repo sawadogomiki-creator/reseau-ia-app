@@ -22,6 +22,31 @@ st.set_page_config(
     layout="wide",
 )
 
+# ============================================================================
+# INTERFACE DESKTOP — IA RÉSEAU PRO
+# ============================================================================
+
+st.markdown("""
+<style>
+:root { --app-bg:#f4f7fb; --app-border:#d8e0ea; --app-text:#172033; }
+.stApp { background:var(--app-bg); color:var(--app-text); }
+.block-container { padding-top:5.8rem; padding-bottom:3.2rem; max-width:1500px; }
+.desktop-titlebar { position:fixed; top:0; left:0; right:0; z-index:999; height:62px; background:linear-gradient(90deg,#082b68,#0b3d91,#1456b8); color:white; display:flex; align-items:center; padding:0 24px; box-shadow:0 2px 12px rgba(0,0,0,.20); }
+.desktop-brand { font-size:21px; font-weight:800; }
+.desktop-subtitle { margin-left:18px; font-size:13px; opacity:.78; border-left:1px solid rgba(255,255,255,.35); padding-left:18px; }
+.toolbar { background:white; border:1px solid var(--app-border); border-radius:12px; padding:8px 10px; margin:0 0 14px; box-shadow:0 2px 8px rgba(18,38,63,.06); }
+div[data-testid="stMetric"] { background:white; border:1px solid var(--app-border); border-radius:12px; padding:12px; box-shadow:0 2px 8px rgba(18,38,63,.05); }
+.statusbar { position:fixed; bottom:0; left:0; right:0; z-index:998; background:#132238; color:#dce7f5; min-height:30px; display:flex; align-items:center; padding:0 14px; font-size:12px; box-shadow:0 -2px 8px rgba(0,0,0,.12); }
+.statusbar span { margin-right:22px; }
+section[data-testid="stSidebar"] { background:#10243f; border-right:1px solid #203957; }
+section[data-testid="stSidebar"] * { color:#eef5ff; }
+section[data-testid="stSidebar"] .stButton > button { text-align:left; border:1px solid transparent; background:transparent; color:#eaf2ff; border-radius:8px; margin:2px 0; min-height:38px; }
+section[data-testid="stSidebar"] .stButton > button:hover { background:#1b3b64; border-color:#315984; }
+.stButton > button { border-radius:8px; font-weight:600; }
+[data-testid="stDataFrame"] { border:1px solid var(--app-border); border-radius:10px; overflow:hidden; }
+</style>
+""", unsafe_allow_html=True)
+
 MODEL_PATH = "modele_xgboost.pkl"
 
 HISTORY_LEN = 120
@@ -1357,127 +1382,79 @@ def get_weekly_forecast():
 init_state()
 
 # ============================================================================
-# EN-TÊTE
+# EN-TÊTE — STYLE APPLICATION PC
 # ============================================================================
 
-st.title(
-    "⚡ Système IA de Prédiction — "
-    "Parc de transformateurs (Ouagadougou)"
-)
+ambient_live, humidity_live, live_ok = get_live_weather()
 
-ambient_live, humidity_live, live_ok = (
-    get_live_weather()
-)
+st.markdown("""
+<div class="desktop-titlebar">
+  <div class="desktop-brand">⚡ IA RÉSEAU PRO</div>
+  <div class="desktop-subtitle">Supervision prédictive — Parc de transformateurs SONABEL · Ouagadougou</div>
+</div>
+""", unsafe_allow_html=True)
 
-top1, top2, top3 = st.columns(
-    [2, 2, 3]
-)
+with st.sidebar:
+    st.markdown("## ⚡ IA RÉSEAU PRO")
+    st.caption("Centre de supervision et de simulation")
+    st.divider()
+    st.markdown("### NAVIGATION")
+    nav_groups = {
+        "SUPERVISION": ["🏠 Tableau de bord", "📋 État des transformateurs", "🗺️ Carte du parc"],
+        "ANALYSE": ["📈 Historique des pannes", "🌦️ Météo & prévisions"],
+        "SIMULATION": ["🖐️ Mode manuel", "🎲 Simulation de pannes"],
+    }
+    for group, items in nav_groups.items():
+        st.caption(group)
+        for item in items:
+            active = st.session_state.section == item
+            if st.button(("● " if active else "○ ") + item, key=f"side_{item}", use_container_width=True, type="primary" if active else "secondary"):
+                st.session_state.section = item
+                st.rerun()
+    st.divider()
+    st.markdown("### CONTRÔLE SYSTÈME")
+    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre", key="sidebar_run_toggle", use_container_width=True):
+        st.session_state.running = not st.session_state.running
+        st.rerun()
+    st.markdown("### PARAMÈTRES")
+    with st.expander("⚙️ Réglages interface"):
+        st.checkbox("Actualisation automatique", value=st.session_state.running, disabled=True)
+        st.selectbox("Densité", ["Standard", "Compacte"], index=0, disabled=True)
+        st.selectbox("Thème", ["Professionnel clair", "Sombre (à intégrer)"], index=0, disabled=True)
+        st.caption("Les réglages avancés du moteur IA restent inchangés dans cette version.")
 
-with top1:
+st.markdown('<div class="toolbar">', unsafe_allow_html=True)
+tb1, tb2, tb3, tb4, tb5, tb6 = st.columns([1.1,1.1,1.1,1.2,1.2,2.8])
+with tb1:
+    if st.button("🏠 Accueil", key="tb_home", use_container_width=True):
+        st.session_state.section = "🏠 Tableau de bord"; st.rerun()
+with tb2:
+    if st.button("🔄 Actualiser", key="tb_refresh", use_container_width=True):
+        st.rerun()
+with tb3:
+    if st.button("🎲 Simulation", key="tb_sim", use_container_width=True):
+        st.session_state.section = "🎲 Simulation de pannes"; st.rerun()
+with tb4:
+    if st.button("🖐️ Manuel", key="tb_manual", use_container_width=True):
+        st.session_state.section = "🖐️ Mode manuel"; st.rerun()
+with tb5:
+    if st.button("📊 État parc", key="tb_state", use_container_width=True):
+        st.session_state.section = "📋 État des transformateurs"; st.rerun()
+with tb6:
+    source = "🟢 Météo connectée" if live_ok else "🟠 Météo hors ligne — estimation"
+    st.markdown(f'<div style="text-align:right;padding:9px 8px;font-size:13px;">{source} · {ambient_live:.1f} °C · {humidity_live:.0f} % HR</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-    if st.button(
-        "⏸️ Pause"
-        if st.session_state.running
-        else "▶️ Reprendre",
-        key="run_toggle",
-    ):
+running_label = "EN SERVICE" if st.session_state.running else "EN PAUSE"
+model_label = "XGBoost chargé" if MODEL is not None else "Mode heuristique"
+s1, s2, s3, s4 = st.columns([1.2,1.8,2.0,2.0])
+with s1: st.markdown(f"**État :** {running_label}")
+with s2: st.markdown(f"**Moteur :** {model_label}")
+with s3: st.markdown(f"**Heure :** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs surveillés")
 
-        st.session_state.running = (
-            not st.session_state.running
-        )
-
-with top2:
-
-    st.metric(
-        "🕒 Heure actuelle",
-        datetime.now().strftime(
-            "%H:%M:%S"
-        ),
-    )
-
-    st.caption(
-        datetime.now().strftime(
-            "%A %d %B %Y"
-        )
-    )
-
-with top3:
-
-    source = (
-        "en direct (Open-Meteo)"
-        if live_ok
-        else "estimation saisonnière (hors ligne)"
-    )
-
-    st.metric(
-        f"🌡️ Météo Ouagadougou — {source}",
-        f"{ambient_live:.1f} °C / "
-        f"{humidity_live:.0f} % HR",
-    )
-
-st.caption(
-    "L'horloge affiche l'heure réelle. "
-    "Tant que la simulation n'est pas en pause, "
-    "la page se rafraîchit chaque seconde."
-)
-
-# ============================================================================
-# COMPARAISON DES TRANSFORMATEURS
-# ============================================================================
-
-with st.expander(
-    "📋 Étude comparative des 3 types de transformateurs du parc"
-):
-
-    st.table(
-        pd.DataFrame(
-            [
-                {
-                    "Type": t["type"],
-                    "Quartier": t["quartier"],
-                    "Vulnérabilité type": t[
-                        "vulnerabilite"
-                    ],
-                }
-                for t in TRANSFORMERS
-            ]
-        )
-    )
-
-st.divider()
-
-# ============================================================================
-# NAVIGATION
-# ============================================================================
-
-nav_cols = st.columns(
-    len(SECTIONS)
-)
-
-for col, sec in zip(
-    nav_cols,
-    SECTIONS,
-):
-
-    is_active = (
-        st.session_state.section
-        == sec
-    )
-
-    if col.button(
-        sec,
-        key=f"nav_{sec}",
-        use_container_width=True,
-        type=(
-            "primary"
-            if is_active
-            else "secondary"
-        ),
-    ):
-
-        st.session_state.section = sec
-
-st.divider()
+with st.expander("📋 Étude comparative des 3 types de transformateurs du parc"):
+    st.table(pd.DataFrame([{"Type":t["type"],"Quartier":t["quartier"],"Vulnérabilité type":t["vulnerabilite"]} for t in TRANSFORMERS]))
 
 section = st.session_state.section
 
@@ -3008,6 +2985,15 @@ elif section == "🗺️ Carte du parc":
                 st.markdown(
                     f"- {obstacle}"
                 )
+
+# ============================================================================
+# BARRE D'ÉTAT INFÉRIEURE — STYLE LOGICIEL PC
+# ============================================================================
+
+st.markdown(
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.0</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    unsafe_allow_html=True,
+)
 
 # ============================================================================
 # MESSAGE GLOBAL
