@@ -28,22 +28,29 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-:root { --app-bg:#f4f7fb; --app-border:#d8e0ea; --app-text:#172033; }
-.stApp { background:var(--app-bg); color:var(--app-text); }
-.block-container { padding-top:5.8rem; padding-bottom:3.2rem; max-width:1500px; }
-.desktop-titlebar { position:fixed; top:0; left:0; right:0; z-index:999; height:62px; background:linear-gradient(90deg,#082b68,#0b3d91,#1456b8); color:white; display:flex; align-items:center; padding:0 24px; box-shadow:0 2px 12px rgba(0,0,0,.20); }
-.desktop-brand { font-size:21px; font-weight:800; }
-.desktop-subtitle { margin-left:18px; font-size:13px; opacity:.78; border-left:1px solid rgba(255,255,255,.35); padding-left:18px; }
-.toolbar { background:white; border:1px solid var(--app-border); border-radius:12px; padding:8px 10px; margin:0 0 14px; box-shadow:0 2px 8px rgba(18,38,63,.06); }
-div[data-testid="stMetric"] { background:white; border:1px solid var(--app-border); border-radius:12px; padding:12px; box-shadow:0 2px 8px rgba(18,38,63,.05); }
-.statusbar { position:fixed; bottom:0; left:0; right:0; z-index:998; background:#132238; color:#dce7f5; min-height:30px; display:flex; align-items:center; padding:0 14px; font-size:12px; box-shadow:0 -2px 8px rgba(0,0,0,.12); }
-.statusbar span { margin-right:22px; }
-section[data-testid="stSidebar"] { background:#10243f; border-right:1px solid #203957; }
-section[data-testid="stSidebar"] * { color:#eef5ff; }
-section[data-testid="stSidebar"] .stButton > button { text-align:left; border:1px solid transparent; background:transparent; color:#eaf2ff; border-radius:8px; margin:2px 0; min-height:38px; }
-section[data-testid="stSidebar"] .stButton > button:hover { background:#1b3b64; border-color:#315984; }
-.stButton > button { border-radius:8px; font-weight:600; }
-[data-testid="stDataFrame"] { border:1px solid var(--app-border); border-radius:10px; overflow:hidden; }
+:root { --app-bg:#eef3f8; --app-border:#cfd9e6; --app-text:#172033; --blue:#1261c9; --navy:#092b55; --cyan:#18a8d8; --green:#18a66b; --orange:#f59e0b; --red:#dc3545; }
+.stApp { background:linear-gradient(135deg,#eef3f8 0%,#f8fbff 55%,#e8f1fb 100%); color:var(--app-text); }
+.block-container { padding-top:5.8rem; padding-bottom:4rem; max-width:1540px; }
+.desktop-titlebar { position:fixed; top:0; left:0; right:0; z-index:999; height:62px; background:linear-gradient(90deg,#061f43,#0b438d,#1685c9); color:white; display:flex; align-items:center; padding:0 26px; box-shadow:0 3px 16px rgba(8,43,85,.28); }
+.desktop-brand { font-size:22px; font-weight:850; letter-spacing:.3px; }
+.desktop-subtitle { margin-left:18px; font-size:13px; opacity:.82; border-left:1px solid rgba(255,255,255,.35); padding-left:18px; }
+.toolbar { background:linear-gradient(180deg,#ffffff,#f3f7fb); border:1px solid var(--app-border); border-radius:12px; padding:8px 10px; margin:0 0 16px; box-shadow:0 3px 12px rgba(18,38,63,.07); }
+.toolbar-title { font-size:11px; font-weight:800; color:#66809d; letter-spacing:1px; margin:0 0 5px 4px; }
+div[data-testid="stMetric"] { background:linear-gradient(145deg,#fff,#f4f8fc); border:1px solid var(--app-border); border-radius:13px; padding:13px; box-shadow:0 3px 12px rgba(18,38,63,.07); }
+.statusbar { position:fixed; bottom:0; left:0; right:0; z-index:998; background:#071d38; color:#dcecff; min-height:31px; display:flex; align-items:center; padding:0 16px; font-size:11px; box-shadow:0 -2px 10px rgba(0,0,0,.15); }
+.statusbar span { margin-right:25px; }
+section[data-testid="stSidebar"] { background:linear-gradient(180deg,#071f3e,#0c315d 55%,#092646); border-right:1px solid #1e4773; }
+section[data-testid="stSidebar"] * { color:#edf6ff; }
+section[data-testid="stSidebar"] .stButton > button { text-align:left; border:1px solid transparent; background:rgba(255,255,255,.035); color:#eaf2ff; border-radius:8px; margin:2px 0; min-height:40px; padding-left:12px; }
+section[data-testid="stSidebar"] .stButton > button:hover { background:rgba(33,156,221,.20); border-color:#3677aa; }
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 { color:#72c9ff; font-size:11px; letter-spacing:1.2px; }
+.stButton > button { border-radius:8px; font-weight:650; }
+[data-testid="stDataFrame"] { border:1px solid var(--app-border); border-radius:10px; overflow:hidden; box-shadow:0 2px 8px rgba(18,38,63,.05); }
+.app-section { background:rgba(255,255,255,.72); border:1px solid #d7e1ec; border-radius:14px; padding:16px 18px; margin-bottom:16px; box-shadow:0 3px 12px rgba(18,38,63,.05); }
+.section-banner { border-radius:12px; padding:13px 16px; color:white; background:linear-gradient(90deg,#0a448d,#1595ce); margin-bottom:15px; box-shadow:0 4px 12px rgba(10,68,141,.18); }
+.section-banner h2 { margin:0; font-size:21px; }
+.section-banner p { margin:3px 0 0; opacity:.86; font-size:12px; }
+.report-box { background:linear-gradient(135deg,#eaf6ff,#f7fbff); border:1px solid #b9d9ef; border-left:5px solid #138bd1; border-radius:12px; padding:14px 16px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -579,50 +586,93 @@ def local_risk_sensitivity(features, ttype):
 
 
 def build_intervention_report():
-    """Construit un rapport texte exportable à partir du dernier état."""
+    """Rapport détaillé fondé exclusivement sur l'état du mode simulation."""
     now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     lines = [
-        "RAPPORT DE SURVEILLANCE — IA RÉSEAU PRO / PARC SONABEL",
-        f"Généré le : {now}",
-        "",
-        "IMPORTANT : prototype de démonstration. Les priorités et tendances",
-        "doivent être validées avant tout usage opérationnel.",
+        "RAPPORT COMPLET DE SIMULATION ET CONDUITE À TENIR",
+        "IA RÉSEAU PRO — PARC DE TRANSFORMATEURS SONABEL",
+        f"Date de génération : {now}",
+        "=" * 78,
+        "OBJET DU RAPPORT",
+        "Ce rapport présente les résultats de la simulation de panne et les opérations",
+        "à envisager selon le scénario simulé. Il s'agit d'un outil de démonstration :",
+        "les décisions réelles doivent être confirmées par les procédures d'exploitation",
+        "et les mesures terrain.",
         "",
     ]
-
+    any_failure = False
     for t in TRANSFORMERS:
-        status = st.session_state.last_status[t["id"]]
-        risk = float(status["risk"])
+        status = st.session_state.simulation_status[t["id"]]
+        risk = float(status.get("risk", 0))
+        failure = status.get("failure")
+        progress = float(status.get("progress", 0))
         priority, priority_score = transformer_priority(t, risk)
         features = status.get("features", {})
-
+        if failure:
+            any_failure = True
         lines += [
+            "-" * 78,
             f"{t['nom']} — {t['type']} — {t['quartier']}",
-            f"Risque : {risk:.1f} % | Statut : {status['status']}",
-            f"Tendance : {status['trend_cat']} ({status['trend']:+.2f} pt/min)",
-            f"Priorité indicative : {priority} ({priority_score:.1f}/100)",
-            f"Source : {status['source']}",
-            f"Panne simulée : {status.get('failure') or 'Aucune'}",
+            f"Scénario simulé : {failure or 'Fonctionnement normal'}",
+            f"Niveau de risque simulé : {risk:.1f} % — {status.get('status','Faible')}",
+            f"Progression de la panne : {progress*100:.1f} %",
+            f"Tendance simulée : {status.get('trend_cat','stable')} ({status.get('trend',0):+.2f} pt/min)",
+            f"Priorité indicative : {priority} — score {priority_score:.1f}/100",
         ]
-
         if features:
             lines += [
-                f"Charge : {features.get('charge', 0):.2f}",
-                f"Température huile : {features.get('oil_temp', 0):.1f} °C",
-                f"Température ambiante : {features.get('ambient', 0):.1f} °C",
-                f"Humidité : {features.get('humidity', 0):.1f} %",
-                f"Tension : {features.get('voltage', 0):.3f} p.u.",
+                "Grandeurs simulées :",
+                f"  • Charge relative : {features.get('charge',0):.2f}",
+                f"  • Température huile : {features.get('oil_temp',0):.1f} °C",
+                f"  • Température ambiante : {features.get('ambient',0):.1f} °C",
+                f"  • Humidité : {features.get('humidity',0):.1f} %",
+                f"  • Tension : {features.get('voltage',0):.3f} p.u.",
             ]
-
-        if status.get("failure"):
-            directives = FAILURE_MODES.get(
-                status["failure"], {}
-            ).get("directives", [])
-            lines.append("Directives associées :")
-            lines.extend([f"- {d}" for d in directives])
-
+        if failure:
+            phase_label, _, phase_text = failure_phase(progress)
+            lines += [
+                f"Phase : {phase_label}",
+                f"Interprétation : {phase_text}",
+                "Conduite à tenir / opérations recommandées :",
+            ]
+            for action in NETWORK_ACTIONS_BY_FAILURE.get(failure, []):
+                lines.append(f"  • {action}")
+            lines.append(f"  • {NETWORK_ACTIONS_BY_TYPE.get(t['type'],'')}")
+            lines.append("Directives techniques ciblées :")
+            for directive in FAILURE_MODES[failure]["directives"]:
+                lines.append(f"  • {directive}")
+            lines += [
+                "Commentaire opérationnel :",
+                f"  Le scénario « {failure} » nécessite une surveillance adaptée au niveau",
+                "  de risque obtenu. Plus la progression est élevée, plus la préparation",
+                "  de l'intervention doit être anticipée. Toute consignation, manœuvre ou",
+                "  réalimentation doit respecter les procédures de sécurité applicables.",
+            ]
+        else:
+            lines += [
+                "Conduite à tenir :",
+                "  • Maintenir la surveillance des grandeurs électriques et thermiques.",
+                "  • Conserver une vigilance sur l'évolution du risque simulé.",
+                "Commentaire : aucun scénario de panne actif pour ce transformateur.",
+            ]
         lines.append("")
-
+    lines += [
+        "=" * 78,
+        "SYNTHÈSE DE CONDUITE À TENIR",
+    ]
+    if any_failure:
+        lines += [
+            "Au moins un scénario de panne est actif dans la simulation.",
+            "Les opérations recommandées sont celles associées aux scénarios sélectionnés.",
+            "En situation réelle, confirmer les alarmes par les mesures disponibles,",
+            "sécuriser la zone, appliquer les procédures de consignation et coordonner",
+            "l'intervention avec le centre de conduite avant toute manœuvre réseau.",
+        ]
+    else:
+        lines += [
+            "Aucune panne n'est actuellement sélectionnée dans la simulation.",
+            "Le parc peut être observé en fonctionnement normal dans le cadre du prototype.",
+        ]
     return "\n".join(lines)
 
 
@@ -654,6 +704,7 @@ def init_state():
         "running": True,
 
         "section": SECTIONS[0],
+
 
         "history": lambda: {
             t["id"]: deque(maxlen=HISTORY_LEN)
@@ -1390,59 +1441,65 @@ ambient_live, humidity_live, live_ok = get_live_weather()
 st.markdown("""
 <div class="desktop-titlebar">
   <div class="desktop-brand">⚡ IA RÉSEAU PRO</div>
-  <div class="desktop-subtitle">Supervision prédictive — Parc de transformateurs SONABEL · Ouagadougou</div>
+  <div class="desktop-subtitle">Supervision prédictive · Parc de transformateurs SONABEL · Ouagadougou</div>
 </div>
 """, unsafe_allow_html=True)
 
+# Une seule navigation : la barre verticale. Les boutons de navigation dupliqués
+# dans la barre horizontale ont été supprimés volontairement.
 with st.sidebar:
     st.markdown("## ⚡ IA RÉSEAU PRO")
-    st.caption("Centre de supervision et de simulation")
+    st.caption("CENTRE DE SUPERVISION ET DE SIMULATION")
     st.divider()
-    st.markdown("### NAVIGATION")
-    nav_groups = {
-        "SUPERVISION": ["🏠 Tableau de bord", "📋 État des transformateurs", "🗺️ Carte du parc"],
-        "ANALYSE": ["📈 Historique des pannes", "🌦️ Météo & prévisions"],
-        "SIMULATION": ["🖐️ Mode manuel", "🎲 Simulation de pannes"],
-    }
-    for group, items in nav_groups.items():
-        st.caption(group)
-        for item in items:
-            active = st.session_state.section == item
-            if st.button(("● " if active else "○ ") + item, key=f"side_{item}", use_container_width=True, type="primary" if active else "secondary"):
-                st.session_state.section = item
-                st.rerun()
+    st.markdown("### SUPERVISION")
+    supervision = [
+        ("🏠", "Tableau de bord"),
+        ("📋", "État des transformateurs"),
+        ("🗺️", "Carte du parc"),
+    ]
+    st.markdown("### ANALYSE")
+    analyse = [
+        ("📈", "Historique des pannes"),
+        ("🌦️", "Météo & prévisions"),
+    ]
+    st.markdown("### SIMULATION")
+    simulation = [
+        ("🖐️", "Mode manuel"),
+        ("🎲", "Simulation de pannes"),
+    ]
+    for icon, label in supervision + analyse + simulation:
+        item = next((x for x in SECTIONS if label in x), label)
+        active = st.session_state.section == item
+        if st.button(("●  " if active else "○  ") + icon + "  " + label,
+                     key=f"side_{label}", use_container_width=True,
+                     type="primary" if active else "secondary"):
+            st.session_state.section = item
+            st.rerun()
     st.divider()
-    st.markdown("### CONTRÔLE SYSTÈME")
-    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre", key="sidebar_run_toggle", use_container_width=True):
+    st.markdown("### CONTRÔLE")
+    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre",
+                 key="sidebar_run_toggle", use_container_width=True):
         st.session_state.running = not st.session_state.running
         st.rerun()
-    st.markdown("### PARAMÈTRES")
-    with st.expander("⚙️ Réglages interface"):
-        st.checkbox("Actualisation automatique", value=st.session_state.running, disabled=True)
-        st.selectbox("Densité", ["Standard", "Compacte"], index=0, disabled=True)
-        st.selectbox("Thème", ["Professionnel clair", "Sombre (à intégrer)"], index=0, disabled=True)
-        st.caption("Les réglages avancés du moteur IA restent inchangés dans cette version.")
+    st.caption("Les paramètres avancés du moteur IA restent inchangés.")
 
-st.markdown('<div class="toolbar">', unsafe_allow_html=True)
-tb1, tb2, tb3, tb4, tb5, tb6 = st.columns([1.1,1.1,1.1,1.2,1.2,2.8])
+# Barre d'outils = actions système uniquement, sans seconde navigation.
+st.markdown('<div class="toolbar"><div class="toolbar-title">BARRE D’OUTILS</div>', unsafe_allow_html=True)
+tb1, tb2, tb3, tb4 = st.columns([1.1,1.1,1.1,4.7])
 with tb1:
-    if st.button("🏠 Accueil", key="tb_home", use_container_width=True):
-        st.session_state.section = "🏠 Tableau de bord"; st.rerun()
-with tb2:
     if st.button("🔄 Actualiser", key="tb_refresh", use_container_width=True):
         st.rerun()
+with tb2:
+    if st.button("⏸️ Pause" if st.session_state.running else "▶️ Reprendre", key="tb_pause", use_container_width=True):
+        st.session_state.running = not st.session_state.running
+        st.rerun()
 with tb3:
-    if st.button("🎲 Simulation", key="tb_sim", use_container_width=True):
-        st.session_state.section = "🎲 Simulation de pannes"; st.rerun()
+    if st.button("📄 Rapport", key="tb_report", use_container_width=True):
+        st.session_state.show_report = True
+        st.rerun()
 with tb4:
-    if st.button("🖐️ Manuel", key="tb_manual", use_container_width=True):
-        st.session_state.section = "🖐️ Mode manuel"; st.rerun()
-with tb5:
-    if st.button("📊 État parc", key="tb_state", use_container_width=True):
-        st.session_state.section = "📋 État des transformateurs"; st.rerun()
-with tb6:
     source = "🟢 Météo connectée" if live_ok else "🟠 Météo hors ligne — estimation"
-    st.markdown(f'<div style="text-align:right;padding:9px 8px;font-size:13px;">{source} · {ambient_live:.1f} °C · {humidity_live:.0f} % HR</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="text-align:right;padding:9px 8px;font-size:13px;">{source} · {ambient_live:.1f} °C · {humidity_live:.0f} % HR · {datetime.now().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 running_label = "EN SERVICE" if st.session_state.running else "EN PAUSE"
@@ -1451,10 +1508,11 @@ s1, s2, s3, s4 = st.columns([1.2,1.8,2.0,2.0])
 with s1: st.markdown(f"**État :** {running_label}")
 with s2: st.markdown(f"**Moteur :** {model_label}")
 with s3: st.markdown(f"**Heure :** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs surveillés")
+with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs")
 
-with st.expander("📋 Étude comparative des 3 types de transformateurs du parc"):
-    st.table(pd.DataFrame([{"Type":t["type"],"Quartier":t["quartier"],"Vulnérabilité type":t["vulnerabilite"]} for t in TRANSFORMERS]))
+# Une seule fenêtre comparative, disponible depuis l'interface générale.
+with st.expander("📋 Référence du parc — types et vulnérabilités"):
+    st.table(pd.DataFrame([{"Type":t["type"],"Quartier":t["quartier"],"Vulnérabilité":t["vulnerabilite"]} for t in TRANSFORMERS]))
 
 section = st.session_state.section
 
@@ -1607,15 +1665,16 @@ if section == "🏠 Tableau de bord":
             "Aucune mesure récente pour ce transformateur."
         )
 
-    st.markdown("### 📄 Rapport d'intervention")
-
+    st.markdown("### 📄 Rapport de simulation")
+    st.markdown('<div class="report-box">Le rapport est construit à partir des scénarios sélectionnés dans <b>Simulation de pannes</b>. Il contient les résultats, la phase de dégradation, les actions réseau, les directives techniques et un commentaire sur la conduite à tenir.</div>', unsafe_allow_html=True)
+    if st.button("🎲 Ouvrir la simulation pour établir le rapport", key="dashboard_open_sim"):
+        st.session_state.section = "🎲 Simulation de pannes"
+        st.rerun()
     report = build_intervention_report()
     st.download_button(
-        "⬇️ Générer le rapport de surveillance",
+        "⬇️ Exporter le rapport complet de simulation",
         data=report,
-        file_name=(
-            f"rapport_parc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        ),
+        file_name=f"rapport_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
         mime="text/plain",
         use_container_width=True,
     )
@@ -2397,7 +2456,7 @@ elif section == "🎲 Simulation de pannes":
 
             hist = list(
                 st.session_state
-                .history[t["id"]]
+                .simulation_history[t["id"]]
             )
 
             if len(hist) >= 2:
@@ -2448,6 +2507,21 @@ elif section == "🎲 Simulation de pannes":
                     use_container_width=True,
                     key=f"simhist_{t['id']}",
                 )
+
+# ------------------------------------------------------------------------
+    # RAPPORT COMPLET — uniquement dans le contexte simulation
+    # ------------------------------------------------------------------------
+    st.markdown("### 📄 Rapport complet et conduite à tenir")
+    st.markdown('<div class="report-box">Ce rapport est calculé à partir des scénarios de panne actuellement sélectionnés. Il ne mélange pas les données du mode manuel avec la simulation.</div>', unsafe_allow_html=True)
+    sim_report = build_intervention_report()
+    st.download_button(
+        "⬇️ Générer le rapport complet de cette simulation",
+        data=sim_report,
+        file_name=f"rapport_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+        mime="text/plain",
+        use_container_width=True,
+        key="simulation_report_download",
+    )
 
 # ============================================================================
 # SECTION 3 — ÉTAT DES TRANSFORMATEURS
