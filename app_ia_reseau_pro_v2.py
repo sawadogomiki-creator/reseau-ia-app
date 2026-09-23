@@ -17,10 +17,13 @@ import streamlit as st
 # ============================================================================
 
 st.set_page_config(
-    page_title="IA Réseau Pro — Parc SONABEL",
+    page_title="IA Réseau Pro — Parc SONABEL v1.1",
     page_icon="⚡",
     layout="wide",
 )
+
+APP_VERSION = "1.1 — interface isolée"
+
 
 # ============================================================================
 # INTERFACE DESKTOP — IA RÉSEAU PRO
@@ -1477,46 +1480,32 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Une seule navigation : la barre verticale. Les boutons de navigation dupliqués
-# dans la barre horizontale ont été supprimés volontairement.
+# NAVIGATION UNIQUE — chaque entrée correspond à une seule page.
 with st.sidebar:
     st.markdown("## ⚡ IA RÉSEAU PRO")
     st.caption("CENTRE DE SUPERVISION ET DE SIMULATION")
     st.divider()
-    st.markdown("### SUPERVISION")
-    supervision = [
-        ("🏠", "Tableau de bord"),
-        ("📋", "État des transformateurs"),
-        ("🗺️", "Carte du parc"),
+    nav_groups = [
+        ("SUPERVISION", [("🏠", "Tableau de bord", "🏠 Tableau de bord"), ("📋", "État des transformateurs", "📋 État des transformateurs"), ("🗺️", "Carte du parc", "🗺️ Carte du parc")]),
+        ("ANALYSE", [("📈", "Historique des pannes", "📈 Historique des pannes"), ("🌦️", "Météo & prévisions", "🌦️ Météo & prévisions")]),
+        ("SIMULATION", [("🖐️", "Mode manuel", "🖐️ Mode manuel"), ("🎲", "Simulation de pannes", "🎲 Simulation de pannes")]),
     ]
-    st.markdown("### ANALYSE")
-    analyse = [
-        ("📈", "Historique des pannes"),
-        ("🌦️", "Météo & prévisions"),
-    ]
-    st.markdown("### SIMULATION")
-    simulation = [
-        ("🖐️", "Mode manuel"),
-        ("🎲", "Simulation de pannes"),
-    ]
-    for icon, label in supervision + analyse + simulation:
-        item = next((x for x in SECTIONS if label in x), label)
-        active = st.session_state.section == item
-        if st.button(("●  " if active else "○  ") + icon + "  " + label,
-                     key=f"side_{label}", use_container_width=True,
-                     type="primary" if active else "secondary"):
-            st.session_state.section = item
-            st.rerun()
+    for group_title, items in nav_groups:
+        st.markdown(f"### {group_title}")
+        for icon, label, target in items:
+            active = st.session_state.section == target
+            if st.button(f"{'●' if active else '○'}  {icon}  {label}", key=f"nav_{target}", use_container_width=True, type="primary" if active else "secondary"):
+                st.session_state.section = target
+                st.rerun()
     st.divider()
     st.markdown("### CONTRÔLE")
-    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre",
-                 key="sidebar_run_toggle", use_container_width=True):
+    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre", key="sidebar_run_toggle", use_container_width=True):
         st.session_state.running = not st.session_state.running
         st.rerun()
     st.caption("Les paramètres avancés du moteur IA restent inchangés.")
 
 # Barre d'outils = actions système uniquement, sans seconde navigation.
-st.markdown('<div class="toolbar"><div class="toolbar-title">BARRE D’OUTILS</div>', unsafe_allow_html=True)
+st.markdown('<div class="toolbar"><div class="toolbar-title">OUTILS SYSTÈME</div>', unsafe_allow_html=True)
 tb1, tb2, tb3, tb4 = st.columns([1.1,1.1,1.1,4.7])
 with tb1:
     if st.button("🔄 Actualiser", key="tb_refresh", use_container_width=True):
@@ -1526,8 +1515,8 @@ with tb2:
         st.session_state.running = not st.session_state.running
         st.rerun()
 with tb3:
-    if st.button("📄 Rapport", key="tb_report", use_container_width=True):
-        st.session_state.show_report = True
+    if st.button("📄 Rapport simulation", key="tb_report", use_container_width=True):
+        st.session_state.section = "🎲 Simulation de pannes"
         st.rerun()
 with tb4:
     source = "🟢 Météo connectée" if live_ok else "🟠 Météo hors ligne — estimation"
@@ -1560,9 +1549,8 @@ st.markdown(f'<div class="page-header"><h2>{page_title}</h2><p>{page_subtitle}</
 # ============================================================================
 # SECTION 0 — TABLEAU DE BORD
 # ============================================================================
-
-if section == "🏠 Tableau de bord":
-
+def render_dashboard():
+    """Rendu exclusif de la section 🏠 Tableau de bord."""
     st.subheader("🏠 Vue opérationnelle du parc")
     st.caption(
         "Cette vue synthétise le dernier état enregistré. "
@@ -1720,12 +1708,12 @@ if section == "🏠 Tableau de bord":
         use_container_width=True,
     )
 
-# ============================================================================
-# SECTION 1 — MODE MANUEL
-# ============================================================================
+    # ============================================================================
+    # SECTION 1 — MODE MANUEL
+    # ============================================================================
 
-elif section == "🖐️ Mode manuel":
-
+def render_manual_mode():
+    """Rendu exclusif de la section 🖐️ Mode manuel."""
     st.subheader(
         "Mode manuel — paramètres électriques"
     )
@@ -1915,12 +1903,12 @@ elif section == "🖐️ Mode manuel":
                     f"{risk:.1f} %**"
                 )
 
-# ============================================================================
-# SECTION 2 — SIMULATION DE PANNES
-# ============================================================================
+    # ============================================================================
+    # SECTION 2 — SIMULATION DE PANNES
+    # ============================================================================
 
-elif section == "🎲 Simulation de pannes":
-
+def render_simulation_mode():
+    """Rendu exclusif de la section 🎲 Simulation de pannes."""
     st.subheader(
         "Simulation — évolution progressive vers la panne"
     )
@@ -2546,7 +2534,7 @@ elif section == "🎲 Simulation de pannes":
                     key=f"simhist_{t['id']}",
                 )
 
-# ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
     # RAPPORT COMPLET — uniquement dans le contexte simulation
     # ------------------------------------------------------------------------
     st.markdown("### 📄 Rapport complet et conduite à tenir")
@@ -2561,12 +2549,12 @@ elif section == "🎲 Simulation de pannes":
         key="simulation_report_download",
     )
 
-# ============================================================================
-# SECTION 3 — ÉTAT DES TRANSFORMATEURS
-# ============================================================================
+    # ============================================================================
+    # SECTION 3 — ÉTAT DES TRANSFORMATEURS
+    # ============================================================================
 
-elif section == "📋 État des transformateurs":
-
+def render_transformer_status():
+    """Rendu exclusif de la section 📋 État des transformateurs."""
     st.subheader(
         "État courant du parc"
     )
@@ -2632,12 +2620,12 @@ elif section == "📋 État des transformateurs":
         "issu de la simulation."
     )
 
-# ============================================================================
-# SECTION 4 — HISTORIQUE DES PANNES
-# ============================================================================
+    # ============================================================================
+    # SECTION 4 — HISTORIQUE DES PANNES
+    # ============================================================================
 
-elif section == "📈 Historique des pannes":
-
+def render_failure_history():
+    """Rendu exclusif de la section 📈 Historique des pannes."""
     st.subheader(
         "Historique des épisodes à risque élevé"
     )
@@ -2706,12 +2694,12 @@ elif section == "📈 Historique des pannes":
             hide_index=True,
         )
 
-# ============================================================================
-# SECTION 5 — MÉTÉO
-# ============================================================================
+    # ============================================================================
+    # SECTION 5 — MÉTÉO
+    # ============================================================================
 
-elif section == "🌦️ Météo & prévisions":
-
+def render_weather():
+    """Rendu exclusif de la section 🌦️ Météo & prévisions."""
     st.subheader(
         "Météo en direct et prévisions à 7 jours"
     )
@@ -2808,12 +2796,12 @@ elif section == "🌦️ Météo & prévisions":
         use_container_width=True,
     )
 
-# ============================================================================
-# SECTION 6 — CARTE DU PARC
-# ============================================================================
+    # ============================================================================
+    # SECTION 6 — CARTE DU PARC
+    # ============================================================================
 
-elif section == "🗺️ Carte du parc":
-
+def render_map():
+    """Rendu exclusif de la section 🗺️ Carte du parc."""
     st.subheader(
         "Carte du parc — état réel des transformateurs"
     )
@@ -3099,11 +3087,26 @@ elif section == "🗺️ Carte du parc":
                 )
 
 # ============================================================================
+# ROUTEUR UNIQUE — UNE SEULE PAGE DE CONTENU À LA FOIS
+# ============================================================================
+SECTION_RENDERERS = {
+    "🏠 Tableau de bord": render_dashboard,
+    "🖐️ Mode manuel": render_manual_mode,
+    "🎲 Simulation de pannes": render_simulation_mode,
+    "📋 État des transformateurs": render_transformer_status,
+    "📈 Historique des pannes": render_failure_history,
+    "🌦️ Météo & prévisions": render_weather,
+    "🗺️ Carte du parc": render_map,
+}
+current_renderer = SECTION_RENDERERS.get(st.session_state.section, render_dashboard)
+current_renderer()
+
+# ============================================================================
 # BARRE D'ÉTAT INFÉRIEURE — STYLE LOGICIEL PC
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.0</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.1</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
