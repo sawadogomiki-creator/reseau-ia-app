@@ -17,12 +17,12 @@ import streamlit as st
 # ============================================================================
 
 st.set_page_config(
-    page_title="IA Réseau Pro — Parc SONABEL v1.4",
+    page_title="IA Réseau Pro — Parc SONABEL v1.7",
     page_icon="⚡",
     layout="wide",
 )
 
-APP_VERSION = "1.4 — décision assistée par l'IA"
+APP_VERSION = "1.7 — anticipation du type de panne"
 
 # ============================================================================
 # INTERFACE DESKTOP — IA RÉSEAU PRO
@@ -70,6 +70,38 @@ OUAGA_LON = -1.5197
 
 FAILURE_TIME_CONSTANT = 90.0
 HEAT_ALERT_THRESHOLD = 38.0
+
+# Simulation : True = à l'apparition de la panne, le risque part de 0 % puis
+# rejoint progressivement la valeur calculée par le modèle (à 100 % de
+# progression, le risque affiché est exactement celui du modèle).
+# False = risque du modèle dès le départ (ne part pas de 0 %).
+SIM_RELATIVE_RISK = True
+
+# Grandeurs électriques en unités réelles (côté basse tension).
+# ATTENTION : puissances nominales = VALEURS D'EXEMPLE, à remplacer par les
+# valeurs des plaques signalétiques réelles des transformateurs.
+RATINGS_KVA = {"TR-01": 630, "TR-02": 400, "TR-03": 160}
+U_NOM = 400.0  # V, tension nominale BT entre phases (soit 230 V phase-neutre)
+
+
+def nominal_current(t):
+    """Courant nominal BT (A) : I = S / (√3 · U)."""
+    return RATINGS_KVA.get(t["nom"], 400) * 1000 / (math.sqrt(3) * U_NOM)
+
+
+def activate_manual(tid):
+    """Appelé au premier réglage d'un curseur : lance le calcul du risque."""
+    st.session_state.manual_active[tid] = True
+
+
+def load_zone(c):
+    if c < 0.8:
+        return "🟢 charge légère"
+    if c < 1.0:
+        return "🟢 charge normale"
+    if c < 1.2:
+        return "🟠 surcharge admissible"
+    return "🔴 surcharge critique"
 
 # ============================================================================
 # TRANSFORMATEURS
@@ -518,6 +550,113 @@ RISK_LEVEL_ACTIONS = [
 ]
 
 
+# ============================================================================
+# ANTICIPATION DU TYPE DE PANNE
+# ============================================================================
+# Le modèle XGBoost donne un risque GLOBAL de panne. La répartition de ce
+# risque entre les types de panne est estimée en comparant l'écart observé
+# (par rapport à un fonctionnement sain) aux trajectoires des 5 pannes
+# connues (FAILURE_MODES) : plus l'écart ressemble à une panne, plus elle
+# reçoit une part du risque global. Ce n'est PAS une probabilité issue d'un
+# modèle multi-classe ; pour cela il faudrait entraîner le modèle avec le
+# type de panne comme étiquette.
+
+FAILURE_LABELS = {
+    "Surtension (foudre / manœuvre)": "surtension",
+    "Court-circuit interne": "court-circuit",
+    "Température élevée / surcharge thermique": "surchauffe",
+    "Surcharge électrique prolongée": "surcharge",
+    "Défaut d'isolement (humidité)": "défaut d'isolement",
+}
+
+SIGNATURE_SCALES = {"charge": 0.4, "oil_temp": 15.0, "voltage": 0.2, "humidity": 25.0, "ambient": 5.0}
+SIGNATURE_POSITIVE = {"charge", "oil_temp", "humidity", "ambient"}  # nocif quand ça monte
+SIGNATURE_SIGMA = 0.4  # tolérance d'écart de direction
+
+
+def default_reference(features):
+    """Fonctionnement sain de référence (mode manuel)."""
+    season = SEASON_PRESETS.get(
+        features.get("season_label"), SEASON_PRESETS["Saison sèche chaude"]
+    )
+    return {
+        "charge": 0.8,
+        "oil_temp": 45 + 28 * 0.8,
+        "voltage": 1.0,
+        "humidity": float(season["humidity"]),
+        "ambient": 35.0,
+    }
+
+
+def failure_shares(features, reference=None):
+    """Part (0..1, somme = 1) attribuée à chaque type de panne."""
+    ref = reference or default_reference(features)
+    dev = {}
+    for k, sc in SIGNATURE_SCALES.items():
+        d = float(features[k]) - float(ref[k])
+        if k in SIGNATURE_POSITIVE:
+            d = max(0.0, d)
+        dev[k] = d / sc
+
+    nd2 = sum(v * v for v in dev.values())
+    if nd2 < 0.15 ** 2:
+        return {}  # aucun écart notable : pas de signature de panne
+
+    scores = {}
+    for name, fm in FAILURE_MODES.items():
+        e = {k: fm["effet"].get(k, 0.0) / sc for k, sc in SIGNATURE_SCALES.items()}
+        ne2 = sum(v * v for v in e.values())
+        dot = sum(dev[k] * e[k] for k in SIGNATURE_SCALES)
+        if dot <= 0:
+            scores[name] = 0.0
+            continue
+        progress = dot / ne2                                   # ampleur le long de la panne
+        resid = math.sqrt(max(0.0, nd2 - dot * dot / ne2) / nd2)  # écart de direction
+        scores[name] = min(1.0, progress) * math.exp(-((resid / SIGNATURE_SIGMA) ** 2))
+
+    total = sum(scores.values())
+    if total <= 1e-9:
+        return {}
+    return {n: v / total for n, v in scores.items()}
+
+
+def anticipated_failures(features, global_risk, reference=None):
+    """Liste triée (nom, libellé, risque %) : part du risque global par type de panne."""
+    shares = failure_shares(features, reference)
+    rows = [
+        (name, FAILURE_LABELS.get(name, name), float(global_risk) * w)
+        for name, w in shares.items()
+    ]
+    rows.sort(key=lambda r: -r[2])
+    return rows
+
+
+def render_failure_forecast(features, risk, slope, reference=None, simulated=None):
+    """Affiche la panne anticipée : « Risque de court-circuit 20 % »."""
+    rows = anticipated_failures(features, risk, reference)
+    top = rows[0] if rows and rows[0][2] >= 1.0 else None
+
+    if top:
+        st.metric(f"Risque de {top[1]}", f"{top[2]:.0f} %")
+    else:
+        st.metric("Panne anticipée", "Aucune")
+
+    st.caption(f"Risque global : **{risk:.1f} %** · tendance {slope:+.2f} pt/min")
+
+    shown = [r for r in rows[:3] if r[2] >= 1.0]
+    for _, label, pct in shown:
+        st.progress(min(1.0, pct / 100), text=f"{label.capitalize()} — {pct:.0f} %")
+    if shown:
+        st.caption("Répartition estimée du risque global par type de panne.")
+
+    if simulated:
+        sim_label = FAILURE_LABELS.get(simulated, simulated)
+        if top and top[0] == simulated:
+            st.caption(f"🎯 Scénario simulé : {sim_label} — identifié par l'IA.")
+        else:
+            st.caption(f"Scénario simulé : {sim_label} — signature encore ambiguë.")
+
+
 def ai_what_if(features, ttype, driver, bonus=0.0):
     """Risque recalculé par le modèle si l'on agit sur la cause principale."""
     f = dict(features)
@@ -537,14 +676,17 @@ def ai_what_if(features, ttype, driver, bonus=0.0):
     return after, label
 
 
-def ai_decision(features, ttype, risk, bonus=0.0):
+def ai_decision(features, ttype, risk, bonus=0.0, reference=None):
     df = local_risk_sensitivity(features, ttype)
     top = df.sort_values("Effet local (pts)", ascending=False).iloc[0]
     effect = float(top["Effet local (pts)"])
     driver = top["Variable"] if effect > 0.05 else None
     level_action = next(txt for lo, txt in RISK_LEVEL_ACTIONS if risk >= lo)
     what_if = ai_what_if(features, ttype, driver, bonus) if (driver and risk >= 35) else None
+    failures = anticipated_failures(features, risk, reference)
+    failure = failures[0] if failures and failures[0][2] >= 5.0 else None
     return {
+        "failure": failure,
         "driver": driver,
         "effect": effect,
         "source": df.attrs.get("source", "analyse locale"),
@@ -554,9 +696,9 @@ def ai_decision(features, ttype, risk, bonus=0.0):
     }
 
 
-def render_ai_card(t, features, risk, mode, bonus=0.0):
+def render_ai_card(t, features, risk, mode, bonus=0.0, reference=None):
     """Fiche de décision : diagnostic, cause, démarche, effet attendu."""
-    d = ai_decision(features, t["type"], risk, bonus)
+    d = ai_decision(features, t["type"], risk, bonus, reference)
     priority, score = transformer_priority(t, risk)
 
     # Notification uniquement lors d'un changement de niveau.
@@ -575,7 +717,18 @@ def render_ai_card(t, features, risk, mode, bonus=0.0):
                 f"**Cause principale détectée :** {d['driver']} "
                 f"(sensibilité locale {d['effect']:+.1f} pt)"
             )
-        if d["action"] and risk >= 35:
+        if d["failure"] and risk >= 35:
+            name, label, pct = d["failure"]
+            st.markdown(f"**Panne à anticiper :** {label} (≈ {pct:.0f} %)")
+            steps = (
+                NETWORK_ACTIONS_BY_FAILURE.get(name, [])[:1]
+                + FAILURE_MODES[name]["directives"][:1]
+            )
+            st.markdown(
+                "**Démarche recommandée :**\n"
+                + "\n".join(f"- {step}" for step in steps)
+            )
+        elif d["action"] and risk >= 35:
             st.markdown(f"**Démarche recommandée :** {d['action']}")
         if d["what_if"]:
             after, label = d["what_if"]
@@ -693,6 +846,11 @@ def build_intervention_report():
             f"Priorité indicative : {priority} — score {priority_score:.1f}/100",
         ]
         if features:
+            top_af = anticipated_failures(features, risk, status.get("reference"))
+            if top_af and top_af[0][2] >= 1.0:
+                lines.append(
+                    f"Panne anticipée par l'IA : {top_af[0][1]} ({top_af[0][2]:.0f} %)"
+                )
             lines += [
                 "Grandeurs simulées :",
                 f"  • Charge relative : {features.get('charge', 0):.2f}",
@@ -770,7 +928,7 @@ def create_last_status():
 
 
 def _manual_defaults():
-    return {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8}
+    return {"voltage": 1.0, "charge": 0.0, "current_ratio": 0.0}
 
 
 def init_state():
@@ -784,6 +942,7 @@ def init_state():
         "simulation_history": lambda: {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS},
         "manual_target": lambda: {t["id"]: _manual_defaults() for t in TRANSFORMERS},
         "manual_effective": lambda: {t["id"]: _manual_defaults() for t in TRANSFORMERS},
+        "manual_active": lambda: {t["id"]: False for t in TRANSFORMERS},
         "manual_temperature": 32.0,
         "manual_season": "Saison sèche chaude",
         "simulation_temperature": 32.0,
@@ -807,6 +966,7 @@ def init_state():
         tid = t["id"]
         st.session_state.manual_target.setdefault(tid, _manual_defaults())
         st.session_state.manual_effective.setdefault(tid, _manual_defaults())
+        st.session_state.manual_active.setdefault(tid, False)
         st.session_state.sim_failure.setdefault(tid, None)
         st.session_state.sim_start_time.setdefault(tid, None)
         st.session_state.active_event.setdefault(tid, None)
@@ -1400,20 +1560,48 @@ def render_manual_mode():
             st.markdown(f"### {t['nom']} — {t['type']}")
             st.caption(f"📍 {t['quartier']}")
 
-            tgt = st.session_state.manual_target[t["id"]]
+            tid = t["id"]
+            tgt = st.session_state.manual_target[tid]
+            kva = RATINGS_KVA.get(t["nom"], 400)
+            i_nom = nominal_current(t)
 
-            tgt["voltage"] = st.slider(
-                "Tension (p.u.)", 0.85, 1.15, tgt["voltage"], 0.01, key=f"v_{t['id']}",
+            volts = st.slider(
+                "Tension BT entre phases (V)", 360.0, 440.0, U_NOM, 2.0,
+                format="%.0f V", key=f"vv_{tid}",
+                on_change=activate_manual, args=(tid,),
             )
-            tgt["current_ratio"] = st.slider(
-                "Courant relatif", 0.2, 1.6, tgt["current_ratio"], 0.02, key=f"c_{t['id']}",
-            )
-            tgt["charge"] = st.slider(
-                "Charge relative", 0.2, 1.6, tgt["charge"], 0.02, key=f"ch_{t['id']}",
+            i_max = float(round(1.5 * i_nom / 5) * 5)
+            amps = st.slider(
+                "Courant de charge (A)", 0.0, i_max, 0.0, 5.0,
+                format="%.0f A", key=f"ia_{tid}",
+                on_change=activate_manual, args=(tid,),
             )
 
-            animate_towards_target(t["id"])
-            eff = st.session_state.manual_effective[t["id"]]
+            # Conversion en grandeurs relatives (p.u.) pour le modèle :
+            # charge = P / S_n = (U / U_n) × (I / I_n)
+            tgt["voltage"] = volts / U_NOM
+            tgt["current_ratio"] = amps / i_nom
+            tgt["charge"] = tgt["voltage"] * tgt["current_ratio"]
+
+            # Avant toute manipulation : aucun calcul, tout reste à zéro.
+            if not st.session_state.manual_active[tid]:
+                st.session_state.manual_effective[tid].update(tgt)
+                st.caption(f"Nominal : {kva} kVA · {i_nom:.0f} A · charge 0 %")
+                st.metric("Panne anticipée", "Aucune")
+                st.info(
+                    "🟢 En attente — réglez la tension ou le courant "
+                    "pour lancer le calcul du risque."
+                )
+                continue
+
+            animate_towards_target(tid)
+            eff = st.session_state.manual_effective[tid]
+
+            st.caption(
+                f"Nominal : {kva} kVA · {i_nom:.0f} A · "
+                f"tension phase-neutre {volts / math.sqrt(3):.0f} V · "
+                f"charge {tgt['charge'] * 100:.0f} % — {load_zone(eff['charge'])}"
+            )
 
             oil_temp = 45 + eff["charge"] * 28 + max(0, manual_temp - 30) * 0.6
 
@@ -1437,7 +1625,7 @@ def render_manual_mode():
                 source="manuel", failure=None, progress=0.0, features=features,
             )
 
-            st.metric("Risque électrique", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
+            render_failure_forecast(features, risk, slope)
 
             priority, priority_score = transformer_priority(t, risk)
             st.caption(f"Priorité indicative : **{priority}** ({priority_score:.1f}/100)")
@@ -1479,7 +1667,8 @@ def render_simulation_mode():
     st.caption(
         "Lorsqu'une panne est sélectionnée, le risque commence près de 0 % "
         "puis augmente progressivement. À 50 %, une vigilance est déclenchée ; "
-        "à 65 %, le niveau devient élevé."
+        "à 65 %, le niveau devient élevé. Tant qu'aucune panne n'est sélectionnée, "
+        "rien n'est simulé et le risque reste à 0 %."
     )
 
     # ------------------------------------------------------------------------
@@ -1567,8 +1756,24 @@ def render_simulation_mode():
                     source="simulation", failure=new_failure,
                     progress=0.0, features={},
                 )
+                st.session_state.simulation_history[t["id"]].clear()
 
             active_failure = st.session_state.sim_failure.get(t["id"])
+
+            # Aucune panne sélectionnée : rien n'est simulé, tout reste à zéro.
+            if not active_failure:
+                st.session_state.simulation_history[t["id"]].clear()
+                update_simulation_status(
+                    t["id"], 0.0, 0.0, "stable", "Faible", "🟢",
+                    source="simulation", failure=None,
+                    progress=0.0, features={},
+                )
+                st.metric("Panne anticipée", "Aucune")
+                st.success(
+                    "🟢 Aucune panne sélectionnée — choisissez un mode de "
+                    "panne pour lancer la simulation."
+                )
+                continue
 
             climate = TYPE_CLIMATE.get(
                 t["type"],
@@ -1653,6 +1858,21 @@ def render_simulation_mode():
             if weather["orage"]:
                 climate_bonus += 5.0 * climate["ambient_factor"]
 
+            # Référence saine : même climat, sans panne.
+            features0 = {
+                "charge": base["charge"],
+                "oil_temp": base["oil_temp"],
+                "ambient": sim_temp,
+                "humidity": humidity_climate,
+                "voltage": base["voltage"],
+                "season_label": sim_season,
+            }
+            if SIM_RELATIVE_RISK:
+                # Le poids de la référence diminue à mesure que la panne
+                # progresse : risque = 0 % au départ, risque du modèle en fin
+                # de progression.
+                climate_bonus -= predict_risk(features0, t["type"]) * (1 - progress)
+
             risk = float(np.clip(risk + climate_bonus, 0, 100))
 
             # ----------------------------------------------------------------
@@ -1668,12 +1888,13 @@ def render_simulation_mode():
                 source="simulation", failure=active_failure,
                 progress=progress, features=features,
             )
+            st.session_state.simulation_status[t["id"]]["reference"] = features0
 
             # ----------------------------------------------------------------
             # AFFICHAGE RISQUE
             # ----------------------------------------------------------------
 
-            st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
+            render_failure_forecast(features, risk, slope, features0, active_failure)
 
             if risk >= 65:
                 st.error(f"🚨 **ALERTE CRITIQUE — {risk:.1f} %** : le niveau de risque est élevé.")
@@ -1687,10 +1908,12 @@ def render_simulation_mode():
             else:
                 st.success(f"🟢 **Risque faible — {risk:.1f} %**")
 
-            render_ai_card(t, features, risk, "sim", climate_bonus)
+            render_ai_card(t, features, risk, "sim", climate_bonus, features0)
 
             st.caption(
                 f"🌡️ T° huile estimée : {oil_temp:.1f} °C · "
+                f"⚡ {voltage * U_NOM:.0f} V · "
+                f"{charge / max(voltage, 0.5) * nominal_current(t):.0f} A · "
                 f"💧 Humidité perçue : {humidity_adj:.0f} %"
                 + (" · ⚡ orage actif" if weather["orage"] else "")
             )
@@ -2033,7 +2256,7 @@ live_page()
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.4 — DÉCISION ASSISTÉE PAR L'IA</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.7 — ANTICIPATION DES PANNES</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
