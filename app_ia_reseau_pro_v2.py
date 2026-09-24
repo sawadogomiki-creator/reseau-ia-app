@@ -17,13 +17,12 @@ import streamlit as st
 # ============================================================================
 
 st.set_page_config(
-    page_title="IA Réseau Pro — Parc SONABEL v1.1",
+    page_title="IA Réseau Pro — Parc SONABEL v1.3",
     page_icon="⚡",
     layout="wide",
 )
 
-APP_VERSION = "1.1 — interface isolée"
-
+APP_VERSION = "1.3 — routage séparé, rafraîchissement par fragment"
 
 # ============================================================================
 # INTERFACE DESKTOP — IA RÉSEAU PRO
@@ -136,62 +135,39 @@ TRANSFORMERS = [
 
 FAILURE_MODES = {
     "Surtension (foudre / manœuvre)": {
-        "effet": {
-            "voltage": +0.22,
-            "oil_temp": +6,
-            "charge": +0.05,
-        },
+        "effet": {"voltage": +0.22, "oil_temp": +6, "charge": +0.05},
         "directives": [
             "Vérifier l'état des parafoudres et des mises à la terre du poste.",
             "Contrôler l'absence de traces d'amorçage sur les traversées.",
             "Programmer un essai de rigidité diélectrique de l'huile dans les 48 h.",
         ],
     },
-
     "Court-circuit interne": {
-        "effet": {
-            "charge": +0.35,
-            "oil_temp": +18,
-            "voltage": -0.15,
-        },
+        "effet": {"charge": +0.35, "oil_temp": +18, "voltage": -0.15},
         "directives": [
             "Mettre hors tension immédiatement et consigner le transformateur.",
             "Réaliser une analyse des gaz dissous (DGA) avant toute remise en service.",
             "Inspecter le serrage des enroulements et l'état des connexions internes.",
         ],
     },
-
     "Température élevée / surcharge thermique": {
-        "effet": {
-            "oil_temp": +14,
-            "ambient": +4,
-            "charge": +0.15,
-        },
+        "effet": {"oil_temp": +14, "ambient": +4, "charge": +0.15},
         "directives": [
             "Réduire la charge sur ce transformateur en reportant une partie des abonnés voisins.",
             "Nettoyer les radiateurs et vérifier l'absence d'encrassement par la poussière.",
             "Surveiller le thermomètre à cadran toutes les heures jusqu'à stabilisation.",
         ],
     },
-
     "Surcharge électrique prolongée": {
-        "effet": {
-            "charge": +0.40,
-            "oil_temp": +10,
-        },
+        "effet": {"charge": +0.40, "oil_temp": +10},
         "directives": [
             "Vérifier le taux de charge réel par rapport à la puissance nominale.",
             "Planifier un rééquilibrage des phases si un déséquilibre est constaté.",
             "Étudier un changement de transformateur pour une puissance supérieure si la surcharge est durable.",
         ],
     },
-
     "Défaut d'isolement (humidité)": {
-        "effet": {
-            "humidity": +25,
-            "oil_temp": +5,
-            "voltage": -0.08,
-        },
+        "effet": {"humidity": +25, "oil_temp": +5, "voltage": -0.08},
         "directives": [
             "Contrôler l'étanchéité du conservateur d'huile et l'état de l'assécheur d'air.",
             "Mesurer la teneur en eau de l'huile (méthode Karl Fischer) et la résistance d'isolement.",
@@ -209,22 +185,18 @@ NETWORK_ACTIONS_BY_FAILURE = {
         "Vérifier les autres postes du même départ HTA, susceptibles d'avoir subi la même surtension.",
         "Basculer temporairement les abonnés sensibles sur un départ voisin si des perturbations sont constatées.",
     ],
-
     "Court-circuit interne": [
         "Isoler immédiatement ce transformateur du réseau et consigner le disjoncteur amont.",
         "Réalimenter les abonnés concernés depuis un poste de secours ou un départ voisin dans les meilleurs délais.",
     ],
-
     "Température élevée / surcharge thermique": [
         "Reporter une partie de la charge de ce transformateur vers un poste voisin le temps du refroidissement.",
         "Limiter temporairement les nouveaux branchements sur ce départ.",
     ],
-
     "Surcharge électrique prolongée": [
         "Étaler dans le temps les nouveaux raccordements prévus sur ce transformateur.",
         "Étudier un transfert durable d'une partie des abonnés vers un poste moins chargé.",
     ],
-
     "Défaut d'isolement (humidité)": [
         "Éviter toute manœuvre sous tension tant que l'isolement n'est pas rétabli.",
         "Prévoir une intervention hors période pluvieuse pour l'entretien du conservateur d'huile.",
@@ -236,12 +208,10 @@ NETWORK_ACTIONS_BY_TYPE = {
         "Accès véhicule dégagé : une équipe peut intervenir rapidement, "
         "sans contrainte majeure."
     ),
-
     "Préfabriqué": (
         "Prévenir les commerçants et usagers à proximité avant toute manœuvre : "
         "l'accès peut être encombré."
     ),
-
     "Haut de poteau": (
         "Intervention en hauteur : mobiliser une nacelle et sécuriser le "
         "dégagement autour du poteau avant toute coupure."
@@ -253,30 +223,11 @@ NETWORK_ACTIONS_BY_TYPE = {
 # ============================================================================
 
 WEATHER_PRESETS = {
-    "☀️ Ciel dégagé (normal)": {
-        "humidity_bonus": 0,
-        "orage": False,
-    },
-
-    "🌧️ Pluie": {
-        "humidity_bonus": 30,
-        "orage": False,
-    },
-
-    "⛈️ Orage (pluie + foudre)": {
-        "humidity_bonus": 35,
-        "orage": True,
-    },
-
-    "🌬️ Fraîcheur / harmattan frais": {
-        "humidity_bonus": -15,
-        "orage": False,
-    },
-
-    "🔥 Canicule": {
-        "humidity_bonus": -10,
-        "orage": False,
-    },
+    "☀️ Ciel dégagé (normal)": {"humidity_bonus": 0, "orage": False},
+    "🌧️ Pluie": {"humidity_bonus": 30, "orage": False},
+    "⛈️ Orage (pluie + foudre)": {"humidity_bonus": 35, "orage": True},
+    "🌬️ Fraîcheur / harmattan frais": {"humidity_bonus": -15, "orage": False},
+    "🔥 Canicule": {"humidity_bonus": -10, "orage": False},
 }
 
 SEASON_PRESETS = {
@@ -293,23 +244,9 @@ TYPE_TIME_FACTOR = {
 }
 
 TYPE_CLIMATE = {
-    "Cabine maçonnée": {
-        "ambient_factor": 0.5,
-        "humidity_factor": 0.35,
-        "orage_voltage_bonus": 0.02,
-    },
-
-    "Préfabriqué": {
-        "ambient_factor": 0.85,
-        "humidity_factor": 0.7,
-        "orage_voltage_bonus": 0.05,
-    },
-
-    "Haut de poteau": {
-        "ambient_factor": 1.2,
-        "humidity_factor": 1.0,
-        "orage_voltage_bonus": 0.10,
-    },
+    "Cabine maçonnée": {"ambient_factor": 0.5, "humidity_factor": 0.35, "orage_voltage_bonus": 0.02},
+    "Préfabriqué": {"ambient_factor": 0.85, "humidity_factor": 0.7, "orage_voltage_bonus": 0.05},
+    "Haut de poteau": {"ambient_factor": 1.2, "humidity_factor": 1.0, "orage_voltage_bonus": 0.10},
 }
 
 # ============================================================================
@@ -333,18 +270,25 @@ SECTIONS = [
     "🗺️ Carte du parc",
 ]
 
+SEASON_CODES = {
+    "Saison sèche fraîche": 0,
+    "Saison sèche chaude": 1,
+    "Harmattan": 2,
+    "Saison des pluies": 3,
+}
+
 # ============================================================================
 # FONCTIONS RISQUE
 # ============================================================================
 
+
 def risk_band(pct: float):
     pct = float(np.clip(pct, 0, 100))
-
     for lo, hi, label, emoji in RISK_BANDS:
         if lo <= pct < hi:
             return label, emoji
-
     return "Élevé", "🔴"
+
 
 # ============================================================================
 # CHARGEMENT DU MODÈLE
@@ -357,8 +301,8 @@ def load_model():
             return joblib.load(MODEL_PATH)
         except Exception:
             return None
-
     return None
+
 
 MODEL = load_model()
 
@@ -368,94 +312,45 @@ TYPE_MULTIPLIER = {
     "Haut de poteau": 1.20,
 }
 
+
+def _model_input(f: dict, season_code: int) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "charge": f["charge"],
+        "oil": f["oil_temp"],
+        "ambient": f["ambient"],
+        "humidity": f["humidity"],
+        "voltage": f["voltage"],
+        "season": season_code,
+    }])
+
+
 def predict_risk(features: dict, ttype: str) -> float:
-
-    season_map = {
-        "Saison sèche fraîche": 0,
-        "Saison sèche chaude": 1,
-        "Harmattan": 2,
-        "Saison des pluies": 3,
-    }
-
-    season_code = season_map.get(
-        features.get("season_label", "Saison sèche chaude"),
-        1,
-    )
+    season_code = SEASON_CODES.get(features.get("season_label", "Saison sèche chaude"), 1)
 
     if MODEL is not None:
         try:
-            x = pd.DataFrame([
-                {
-                    "charge": features["charge"],
-                    "oil": features["oil_temp"],
-                    "ambient": features["ambient"],
-                    "humidity": features["humidity"],
-                    "voltage": features["voltage"],
-                    "season": season_code,
-                }
-            ])
-
-            base = float(
-                MODEL.predict_proba(x)[0][1] * 100
-            )
-
+            base = float(MODEL.predict_proba(_model_input(features, season_code))[0][1] * 100)
         except Exception:
             base = _heuristic_risk(features, season_code)
-
     else:
         base = _heuristic_risk(features, season_code)
 
-    return float(
-        np.clip(
-            base * TYPE_MULTIPLIER.get(ttype, 1.0),
-            0,
-            100,
-        )
-    )
+    return float(np.clip(base * TYPE_MULTIPLIER.get(ttype, 1.0), 0, 100))
+
 
 def _heuristic_risk(f: dict, season_code: int):
-
     charge_term = max(0.0, f["charge"] - 0.8) * 55
-
-    oil_term = max(
-        0.0,
-        f["oil_temp"] - 65,
-    ) * 1.6
-
-    ambient_term = max(
-        0.0,
-        f["ambient"] - 32,
-    ) * 1.2
-
-    humidity_term = max(
-        0.0,
-        f["humidity"] - 60,
-    ) * 0.5
-
-    voltage_term = abs(
-        f["voltage"] - 1.0
-    ) * 60
-
-    season_term = {
-        0: 0,
-        1: 8,
-        2: 5,
-        3: 10,
-    }.get(season_code, 0)
+    oil_term = max(0.0, f["oil_temp"] - 65) * 1.6
+    ambient_term = max(0.0, f["ambient"] - 32) * 1.2
+    humidity_term = max(0.0, f["humidity"] - 60) * 0.5
+    voltage_term = abs(f["voltage"] - 1.0) * 60
+    season_term = {0: 0, 1: 8, 2: 5, 3: 10}.get(season_code, 0)
 
     total = (
-        8
-        + charge_term
-        + oil_term
-        + ambient_term
-        + humidity_term
-        + voltage_term
-        + season_term
+        8 + charge_term + oil_term + ambient_term
+        + humidity_term + voltage_term + season_term
     )
-
-    return float(
-        np.clip(total, 0, 100)
-    )
+    return float(np.clip(total, 0, 100))
 
 
 # ============================================================================
@@ -469,6 +364,7 @@ CRITICALITY = {
     "TR-02": {"criticite": 0.65, "acces": 0.60, "impact_reseau": 0.85},
     "TR-03": {"criticite": 0.85, "acces": 0.35, "impact_reseau": 0.75},
 }
+
 
 def transformer_priority(t, risk):
     """Calcule une priorité d'intervention indicative pour le prototype."""
@@ -509,27 +405,14 @@ def local_risk_sensitivity(features, ttype):
         ("voltage", "Tension", 0.02),
     ]
 
-    season_map = {
-        "Saison sèche fraîche": 0,
-        "Saison sèche chaude": 1,
-        "Harmattan": 2,
-        "Saison des pluies": 3,
-    }
-    season_code = season_map.get(
-        features.get("season_label", "Saison sèche chaude"), 1
-    )
+    season_code = SEASON_CODES.get(features.get("season_label", "Saison sèche chaude"), 1)
 
     if MODEL is not None:
         try:
-            base_x = pd.DataFrame([{
-                "charge": features["charge"],
-                "oil": features["oil_temp"],
-                "ambient": features["ambient"],
-                "humidity": features["humidity"],
-                "voltage": features["voltage"],
-                "season": season_code,
-            }])
-            base = float(MODEL.predict_proba(base_x)[0][1] * 100)
+            def model_value(f):
+                return float(MODEL.predict_proba(_model_input(f, season_code))[0][1] * 100)
+
+            base = model_value(features)
 
             rows = []
             for key, label, delta in feature_defs:
@@ -538,38 +421,20 @@ def local_risk_sensitivity(features, ttype):
                 plus[key] = float(plus[key]) + delta
                 minus[key] = float(minus[key]) - delta
 
-                def model_value(f):
-                    x = pd.DataFrame([{
-                        "charge": f["charge"],
-                        "oil": f["oil_temp"],
-                        "ambient": f["ambient"],
-                        "humidity": f["humidity"],
-                        "voltage": f["voltage"],
-                        "season": season_code,
-                    }])
-                    return float(MODEL.predict_proba(x)[0][1] * 100)
-
-                sensitivity = (
-                    model_value(plus) - model_value(minus)
-                ) / 2.0
+                sensitivity = (model_value(plus) - model_value(minus)) / 2.0
 
                 rows.append({
                     "Variable": label,
                     "Effet local (pts)": round(sensitivity, 2),
                     "Lecture": (
-                        "augmente le risque"
-                        if sensitivity > 0.05
-                        else "réduit le risque"
-                        if sensitivity < -0.05
+                        "augmente le risque" if sensitivity > 0.05
+                        else "réduit le risque" if sensitivity < -0.05
                         else "effet faible"
                     ),
                 })
 
             df = pd.DataFrame(rows)
-            df["Valeur actuelle"] = [
-                round(float(features[k]), 3)
-                for k, _, _ in feature_defs
-            ]
+            df["Valeur actuelle"] = [round(float(features[k]), 3) for k, _, _ in feature_defs]
             df.attrs["source"] = "XGBoost — sensibilité locale"
             df.attrs["base"] = base
             return df
@@ -643,19 +508,19 @@ def build_intervention_report():
             "-" * 78,
             f"{t['nom']} — {t['type']} — {t['quartier']}",
             f"Scénario simulé : {failure or 'Fonctionnement normal'}",
-            f"Niveau de risque simulé : {risk:.1f} % — {status.get('status','Faible')}",
-            f"Progression de la panne : {progress*100:.1f} %",
-            f"Tendance simulée : {status.get('trend_cat','stable')} ({status.get('trend',0):+.2f} pt/min)",
+            f"Niveau de risque simulé : {risk:.1f} % — {status.get('status', 'Faible')}",
+            f"Progression de la panne : {progress * 100:.1f} %",
+            f"Tendance simulée : {status.get('trend_cat', 'stable')} ({status.get('trend', 0):+.2f} pt/min)",
             f"Priorité indicative : {priority} — score {priority_score:.1f}/100",
         ]
         if features:
             lines += [
                 "Grandeurs simulées :",
-                f"  • Charge relative : {features.get('charge',0):.2f}",
-                f"  • Température huile : {features.get('oil_temp',0):.1f} °C",
-                f"  • Température ambiante : {features.get('ambient',0):.1f} °C",
-                f"  • Humidité : {features.get('humidity',0):.1f} %",
-                f"  • Tension : {features.get('voltage',0):.3f} p.u.",
+                f"  • Charge relative : {features.get('charge', 0):.2f}",
+                f"  • Température huile : {features.get('oil_temp', 0):.1f} °C",
+                f"  • Température ambiante : {features.get('ambient', 0):.1f} °C",
+                f"  • Humidité : {features.get('humidity', 0):.1f} %",
+                f"  • Tension : {features.get('voltage', 0):.3f} p.u.",
             ]
         if failure:
             phase_label, _, phase_text = failure_phase(progress)
@@ -666,7 +531,7 @@ def build_intervention_report():
             ]
             for action in NETWORK_ACTIONS_BY_FAILURE.get(failure, []):
                 lines.append(f"  • {action}")
-            lines.append(f"  • {NETWORK_ACTIONS_BY_TYPE.get(t['type'],'')}")
+            lines.append(f"  • {NETWORK_ACTIONS_BY_TYPE.get(t['type'], '')}")
             lines.append("Directives techniques ciblées :")
             for directive in FAILURE_MODES[failure]["directives"]:
                 lines.append(f"  • {directive}")
@@ -685,10 +550,7 @@ def build_intervention_report():
                 "Commentaire : aucun scénario de panne actif pour ce transformateur.",
             ]
         lines.append("")
-    lines += [
-        "=" * 78,
-        "SYNTHÈSE DE CONDUITE À TENIR",
-    ]
+    lines += ["=" * 78, "SYNTHÈSE DE CONDUITE À TENIR"]
     if any_failure:
         lines += [
             "Au moins un scénario de panne est actif dans la simulation.",
@@ -709,260 +571,92 @@ def build_intervention_report():
 # ÉTAT DE SESSION
 # ============================================================================
 
-def create_last_status():
-
+def empty_status():
     return {
-        t["id"]: {
-            "risk": 0.0,
-            "attention": 0.0,
-            "trend": 0.0,
-            "trend_cat": "stable",
-            "status": "Faible",
-            "emoji": "🟢",
-            "source": "initial",
-            "failure": None,
-            "progress": 0.0,
-            "features": {},
-        }
-        for t in TRANSFORMERS
+        "risk": 0.0,
+        "attention": 0.0,
+        "trend": 0.0,
+        "trend_cat": "stable",
+        "status": "Faible",
+        "emoji": "🟢",
+        "source": "initial",
+        "failure": None,
+        "progress": 0.0,
+        "features": {},
     }
 
-def init_state():
 
+def create_last_status():
+    return {t["id"]: empty_status() for t in TRANSFORMERS}
+
+
+def _manual_defaults():
+    return {"voltage": 1.0, "charge": 0.8, "current_ratio": 0.8}
+
+
+def init_state():
     defaults = {
         "running": True,
-
         "section": SECTIONS[0],
-
-
-        "history": lambda: {
-            t["id"]: deque(maxlen=HISTORY_LEN)
-            for t in TRANSFORMERS
-        },
-
+        "history": lambda: {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS},
         # Données strictement internes au mode simulation.
         # Elles ne sont jamais utilisées par le tableau de bord,
         # le mode manuel, l'état des transformateurs ou la carte.
-        "simulation_history": lambda: {
-            t["id"]: deque(maxlen=HISTORY_LEN)
-            for t in TRANSFORMERS
-        },
-
-        "manual_target": lambda: {
-            t["id"]: {
-                "voltage": 1.0,
-                "charge": 0.8,
-                "current_ratio": 0.8,
-            }
-            for t in TRANSFORMERS
-        },
-
-        "manual_effective": lambda: {
-            t["id"]: {
-                "voltage": 1.0,
-                "charge": 0.8,
-                "current_ratio": 0.8,
-            }
-            for t in TRANSFORMERS
-        },
+        "simulation_history": lambda: {t["id"]: deque(maxlen=HISTORY_LEN) for t in TRANSFORMERS},
+        "manual_target": lambda: {t["id"]: _manual_defaults() for t in TRANSFORMERS},
+        "manual_effective": lambda: {t["id"]: _manual_defaults() for t in TRANSFORMERS},
         "manual_temperature": 32.0,
         "manual_season": "Saison sèche chaude",
         "simulation_temperature": 32.0,
         "simulation_season": "Saison sèche chaude",
-
-        "sim_failure": lambda: {
-            t["id"]: None
-            for t in TRANSFORMERS
-        },
-
-        "sim_start_time": lambda: {
-            t["id"]: None
-            for t in TRANSFORMERS
-        },
-
+        "sim_failure": lambda: {t["id"]: None for t in TRANSFORMERS},
+        "sim_start_time": lambda: {t["id"]: None for t in TRANSFORMERS},
         "event_log": list,
-
-        "active_event": lambda: {
-            t["id"]: None
-            for t in TRANSFORMERS
-        },
-
+        "active_event": lambda: {t["id"]: None for t in TRANSFORMERS},
         # État opérationnel utilisé par les pages hors simulation.
         "last_status": create_last_status,
-
         # État strictement isolé du mode simulation.
         "simulation_status": create_last_status,
     }
 
     for key, default in defaults.items():
-
         if key not in st.session_state:
-
-            st.session_state[key] = (
-                default()
-                if callable(default)
-                else default
-            )
+            st.session_state[key] = default() if callable(default) else default
 
     # Sécurité pour les anciens états de session
-
     for t in TRANSFORMERS:
+        tid = t["id"]
+        st.session_state.manual_target.setdefault(tid, _manual_defaults())
+        st.session_state.manual_effective.setdefault(tid, _manual_defaults())
+        st.session_state.sim_failure.setdefault(tid, None)
+        st.session_state.sim_start_time.setdefault(tid, None)
+        st.session_state.active_event.setdefault(tid, None)
+        st.session_state.last_status.setdefault(tid, empty_status())
+        st.session_state.simulation_status.setdefault(tid, empty_status())
+        if tid not in st.session_state.history:
+            st.session_state.history[tid] = deque(maxlen=HISTORY_LEN)
+        if tid not in st.session_state.simulation_history:
+            st.session_state.simulation_history[tid] = deque(maxlen=HISTORY_LEN)
 
-        st.session_state.manual_target.setdefault(
-            t["id"],
-            {
-                "voltage": 1.0,
-                "charge": 0.8,
-                "current_ratio": 0.8,
-            },
-        )
-
-        st.session_state.manual_effective.setdefault(
-            t["id"],
-            {
-                "voltage": 1.0,
-                "charge": 0.8,
-                "current_ratio": 0.8,
-            },
-        )
-
-        st.session_state.sim_failure.setdefault(
-            t["id"],
-            None,
-        )
-
-        st.session_state.sim_start_time.setdefault(
-            t["id"],
-            None,
-        )
-
-        st.session_state.active_event.setdefault(
-            t["id"],
-            None,
-        )
-
-        if t["id"] not in st.session_state.history:
-
-            st.session_state.history[
-                t["id"]
-            ] = deque(maxlen=HISTORY_LEN)
-
-        if t["id"] not in st.session_state.simulation_history:
-            st.session_state.simulation_history[t["id"]] = deque(maxlen=HISTORY_LEN)
-
-    if "last_status" not in st.session_state:
-
-        st.session_state.last_status = create_last_status()
-
-    if "simulation_status" not in st.session_state:
-
-        st.session_state.simulation_status = create_last_status()
-
-    if "simulation_history" not in st.session_state:
-
-        st.session_state.simulation_history = {
-            t["id"]: deque(maxlen=HISTORY_LEN)
-            for t in TRANSFORMERS
-        }
-
-    for t in TRANSFORMERS:
-
-        st.session_state.last_status.setdefault(
-            t["id"],
-            {
-                "risk": 0.0,
-                "attention": 0.0,
-                "trend": 0.0,
-                "trend_cat": "stable",
-                "status": "Faible",
-                "emoji": "🟢",
-                "source": "initial",
-                "failure": None,
-                "progress": 0.0,
-                "features": {},
-            },
-        )
 
 # ============================================================================
 # HISTORIQUE
 # ============================================================================
 
-def push_history(t_id, risk_pct, features):
-
-    st.session_state.history[t_id].append(
-        {
-            "t": datetime.now(),
-            "risk": risk_pct,
-            **features,
-        }
-    )
-
-def compute_trend(t_id):
-
-    hist = st.session_state.history[t_id]
-
+def _trend_from(hist):
     if len(hist) < 3:
         return 0.0, "stable"
 
-    recent = list(hist)[-12:]
-
-    t0 = recent[0]["t"]
-
-    xs = [
-        (p["t"] - t0).total_seconds() / 60.0
-        for p in recent
-    ]
-
-    ys = [
-        p["risk"]
-        for p in recent
-    ]
-
-    if xs[-1] - xs[0] < 1e-6:
-        return 0.0, "stable"
-
-    slope = np.polyfit(
-        xs,
-        ys,
-        1,
-    )[0]
-
-    if slope < 0.5:
-        cat = "stable"
-
-    elif slope < 2.5:
-        cat = "en hausse"
-
-    elif slope < 6:
-        cat = "en hausse rapide"
-
-    else:
-        cat = "critique — hausse brutale"
-
-    return float(slope), cat
-
-def push_simulation_history(t_id, risk_pct, features):
-    """Historique privé au mode simulation."""
-    st.session_state.simulation_history[t_id].append(
-        {
-            "t": datetime.now(),
-            "risk": risk_pct,
-            **features,
-        }
-    )
-
-def compute_simulation_trend(t_id):
-    """Tendance calculée uniquement sur l'historique simulé."""
-    hist = st.session_state.simulation_history[t_id]
-    if len(hist) < 3:
-        return 0.0, "stable"
     recent = list(hist)[-12:]
     t0 = recent[0]["t"]
     xs = [(p["t"] - t0).total_seconds() / 60.0 for p in recent]
     ys = [p["risk"] for p in recent]
+
     if xs[-1] - xs[0] < 1e-6:
         return 0.0, "stable"
+
     slope = np.polyfit(xs, ys, 1)[0]
+
     if slope < 0.5:
         cat = "stable"
     elif slope < 2.5:
@@ -971,285 +665,173 @@ def compute_simulation_trend(t_id):
         cat = "en hausse rapide"
     else:
         cat = "critique — hausse brutale"
+
     return float(slope), cat
+
+
+def push_history(t_id, risk_pct, features):
+    st.session_state.history[t_id].append({"t": datetime.now(), "risk": risk_pct, **features})
+
+
+def compute_trend(t_id):
+    return _trend_from(st.session_state.history[t_id])
+
+
+def push_simulation_history(t_id, risk_pct, features):
+    """Historique privé au mode simulation."""
+    st.session_state.simulation_history[t_id].append({"t": datetime.now(), "risk": risk_pct, **features})
+
+
+def compute_simulation_trend(t_id):
+    """Tendance calculée uniquement sur l'historique simulé."""
+    return _trend_from(st.session_state.simulation_history[t_id])
+
+
+def _status_dict(risk, slope, trend_cat, band_label, emoji, source, failure, progress, features):
+    return {
+        "risk": float(risk),
+        "attention": float(risk),
+        "trend": float(slope),
+        "trend_cat": trend_cat,
+        "status": band_label,
+        "emoji": emoji,
+        "source": source,
+        "failure": failure,
+        "progress": float(progress),
+        "features": features or {},
+    }
+
 
 def update_simulation_status(
     t_id, risk, slope, trend_cat, band_label, emoji,
-    failure=None, progress=0.0, features=None, source="Simulation + XGBoost"
+    failure=None, progress=0.0, features=None, source="Simulation + XGBoost",
 ):
     """Met à jour uniquement l'état interne de la simulation."""
-    st.session_state.simulation_status[t_id] = {
-        "risk": float(risk),
-        "attention": float(risk),
-        "trend": float(slope),
-        "trend_cat": trend_cat,
-        "status": band_label,
-        "emoji": emoji,
-        "source": source,
-        "failure": failure,
-        "progress": float(progress),
-        "features": features or {},
-    }
+    st.session_state.simulation_status[t_id] = _status_dict(
+        risk, slope, trend_cat, band_label, emoji, source, failure, progress, features
+    )
+
 
 def update_last_status(
-    t_id,
-    risk,
-    slope,
-    trend_cat,
-    band_label,
-    emoji,
-    source,
-    failure=None,
-    progress=0.0,
-    features=None,
+    t_id, risk, slope, trend_cat, band_label, emoji, source,
+    failure=None, progress=0.0, features=None,
 ):
+    st.session_state.last_status[t_id] = _status_dict(
+        risk, slope, trend_cat, band_label, emoji, source, failure, progress, features
+    )
 
-    st.session_state.last_status[t_id] = {
-        "risk": float(risk),
-        "attention": float(risk),
-        "trend": float(slope),
-        "trend_cat": trend_cat,
-        "status": band_label,
-        "emoji": emoji,
-        "source": source,
-        "failure": failure,
-        "progress": float(progress),
-        "features": features or {},
-    }
 
 # ============================================================================
 # MANUEL
 # ============================================================================
 
 def animate_towards_target(t_id):
-
     tgt = st.session_state.manual_target[t_id]
-
     eff = st.session_state.manual_effective[t_id]
 
     for k in tgt:
-
-        eff[k] += (
-            tgt[k] - eff[k]
-        ) * ANIMATION_STEP
-
-        if abs(
-            eff[k] - tgt[k]
-        ) < 1e-3:
-
+        eff[k] += (tgt[k] - eff[k]) * ANIMATION_STEP
+        if abs(eff[k] - tgt[k]) < 1e-3:
             eff[k] = tgt[k]
+
 
 # ============================================================================
 # ÉVÉNEMENTS
 # ============================================================================
 
-def log_event_if_needed(
-    t_id,
-    nom,
-    band_label,
-    risk,
-    panne_label,
-):
-
+def log_event_if_needed(t_id, nom, band_label, risk, panne_label):
     active = st.session_state.active_event[t_id]
 
     if band_label == "Élevé":
-
         if active is None:
-
-            st.session_state.event_log.append(
-                {
-                    "transfo_id": t_id,
-                    "nom": nom,
-                    "type_panne": (
-                        panne_label
-                        or "Mode manuel"
-                    ),
-                    "debut": datetime.now(),
-                    "fin": None,
-                    "risque_max": risk,
-                }
-            )
-
-            st.session_state.active_event[t_id] = (
-                len(
-                    st.session_state.event_log
-                ) - 1
-            )
-
+            st.session_state.event_log.append({
+                "transfo_id": t_id,
+                "nom": nom,
+                "type_panne": panne_label or "Mode manuel",
+                "debut": datetime.now(),
+                "fin": None,
+                "risque_max": risk,
+            })
+            st.session_state.active_event[t_id] = len(st.session_state.event_log) - 1
         else:
-
-            ev = st.session_state.event_log[
-                active
-            ]
-
-            ev["risque_max"] = max(
-                ev["risque_max"],
-                risk,
-            )
-
+            ev = st.session_state.event_log[active]
+            ev["risque_max"] = max(ev["risque_max"], risk)
     else:
-
         if active is not None:
+            st.session_state.event_log[active]["fin"] = datetime.now()
+            st.session_state.active_event[t_id] = None
 
-            st.session_state.event_log[
-                active
-            ]["fin"] = datetime.now()
-
-            st.session_state.active_event[
-                t_id
-            ] = None
 
 # ============================================================================
 # PROGRESSION PANNE
 # ============================================================================
 
-def get_failure_progress(
-    t_id,
-    ttype,
-):
-
-    active = (
-        st.session_state
-        .sim_failure
-        .get(t_id)
-    )
-
+def get_failure_progress(t_id, ttype):
+    active = st.session_state.sim_failure.get(t_id)
     if not active:
         return None, 0.0
 
-    start = (
-        st.session_state
-        .sim_start_time
-        .get(t_id)
-    )
-
+    start = st.session_state.sim_start_time.get(t_id)
     if start is None:
         return active, 0.0
 
-    elapsed = max(
-        0.0,
-        time.time() - start,
-    )
-
-    effective_time_constant = (
-        FAILURE_TIME_CONSTANT
-        * TYPE_TIME_FACTOR.get(
-            ttype,
-            1.0,
-        )
-    )
-
-    progress = (
-        1
-        - math.exp(
-            -elapsed
-            / effective_time_constant
-        )
-    )
-
+    elapsed = max(0.0, time.time() - start)
+    effective_time_constant = FAILURE_TIME_CONSTANT * TYPE_TIME_FACTOR.get(ttype, 1.0)
+    progress = 1 - math.exp(-elapsed / effective_time_constant)
     return active, progress
+
 
 # ============================================================================
 # PHASE DE PANNE
 # ============================================================================
 
 def failure_phase(progress):
-
     if progress < 0.12:
-
         return (
             "🔍 Anomalie naissante",
             "info",
-            (
-                "Un écart encore ténu vient d'apparaître "
-                "sur ce transformateur."
-            ),
+            "Un écart encore ténu vient d'apparaître sur ce transformateur.",
         )
-
     if progress < 0.45:
-
         return (
             "⚠️ Dégradation en cours",
             "warning",
-            (
-                "L'écart se creuse progressivement. "
-                "Une intervention préventive peut limiter "
-                "l'aggravation."
-            ),
+            "L'écart se creuse progressivement. Une intervention préventive peut limiter l'aggravation.",
         )
-
     if progress < 0.8:
-
         return (
             "🟠 Aggravation avancée",
             "warning",
-            (
-                "La dégradation s'accélère. "
-                "L'état critique approche."
-            ),
+            "La dégradation s'accélère. L'état critique approche.",
         )
-
     return (
         "🚨 État critique",
         "error",
-        (
-            "Le transformateur approche d'un état "
-            "de défaillance critique."
-        ),
+        "Le transformateur approche d'un état de défaillance critique.",
     )
+
 
 # ============================================================================
 # PRONOSTIC
 # ============================================================================
 
-def prognosis_text(
-    risk_pct,
-    slope,
-    failure_label=None,
-):
-
-    label = (
-        failure_label
-        or "défaillance"
-    )
+def prognosis_text(risk_pct, slope, failure_label=None):
+    label = failure_label or "défaillance"
 
     if slope <= 0.15:
-
         return (
             f"Évolution stable — pas d'aggravation "
-            f"significative détectée pour "
-            f"{label.lower()}."
+            f"significative détectée pour {label.lower()}."
         )
 
-    remaining_pct = max(
-        0.0,
-        90 - risk_pct,
-    )
+    remaining_pct = max(0.0, 90 - risk_pct)
+    minutes_to_90 = remaining_pct / slope if slope > 0 else None
 
-    minutes_to_90 = (
-        remaining_pct / slope
-        if slope > 0
-        else None
-    )
-
-    if (
-        minutes_to_90 is None
-        or minutes_to_90 > 24 * 60
-    ):
-
-        return (
-            f"Tendance à la hausse lente pour "
-            f"{label.lower()} — surveillance renforcée."
-        )
+    if minutes_to_90 is None or minutes_to_90 > 24 * 60:
+        return f"Tendance à la hausse lente pour {label.lower()} — surveillance renforcée."
 
     hours = minutes_to_90 / 60
-
-    delay = (
-        f"environ {int(minutes_to_90)} min"
-        if hours < 1
-        else f"environ {hours:.1f} h"
-    )
+    delay = f"environ {int(minutes_to_90)} min" if hours < 1 else f"environ {hours:.1f} h"
 
     return (
         f"Extrapolation : le seuil de 90 % pourrait être atteint "
@@ -1257,68 +839,32 @@ def prognosis_text(
         f"Ce n'est pas une estimation statistique du temps réel avant panne."
     )
 
+
 # ============================================================================
 # MÉTÉO LIVE
 # ============================================================================
 
 @st.cache_data(ttl=600)
 def get_live_weather():
-
     try:
-
         url = (
             f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={OUAGA_LAT}"
-            f"&longitude={OUAGA_LON}"
-            f"&current=temperature_2m,"
-            f"relative_humidity_2m"
+            f"latitude={OUAGA_LAT}&longitude={OUAGA_LON}"
+            f"&current=temperature_2m,relative_humidity_2m"
             f"&timezone=Africa%2FOuagadougou"
         )
-
-        data = requests.get(
-            url,
-            timeout=4,
-        ).json()
-
+        data = requests.get(url, timeout=4).json()
         return (
-            float(
-                data["current"][
-                    "temperature_2m"
-                ]
-            ),
-            float(
-                data["current"][
-                    "relative_humidity_2m"
-                ]
-            ),
+            float(data["current"]["temperature_2m"]),
+            float(data["current"]["relative_humidity_2m"]),
             True,
         )
-
     except Exception:
-
         month = datetime.now().month
+        temp = 38 if month in (3, 4, 5) else (28 if month in (7, 8, 9) else 33)
+        hum = 75 if month in (7, 8, 9) else 25
+        return float(temp), float(hum), False
 
-        temp = (
-            38
-            if month in (3, 4, 5)
-            else (
-                28
-                if month in (7, 8, 9)
-                else 33
-            )
-        )
-
-        hum = (
-            75
-            if month in (7, 8, 9)
-            else 25
-        )
-
-        return (
-            float(temp),
-            float(hum),
-            False,
-        )
 
 # ============================================================================
 # PRÉVISIONS 7 JOURS
@@ -1326,141 +872,54 @@ def get_live_weather():
 
 @st.cache_data(ttl=1800)
 def get_weekly_forecast():
-
     try:
-
         url = (
             f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={OUAGA_LAT}"
-            f"&longitude={OUAGA_LON}"
-            f"&daily=temperature_2m_max,"
-            f"temperature_2m_min,"
-            f"precipitation_probability_max"
-            f"&forecast_days=7"
-            f"&timezone=Africa%2FOuagadougou"
+            f"latitude={OUAGA_LAT}&longitude={OUAGA_LON}"
+            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+            f"&forecast_days=7&timezone=Africa%2FOuagadougou"
         )
-
-        data = requests.get(
-            url,
-            timeout=5,
-        ).json()
-
+        data = requests.get(url, timeout=5).json()
         d = data["daily"]
 
         rows = []
-
-        for i, date in enumerate(
-            d["time"]
-        ):
-
-            tmax = float(
-                d["temperature_2m_max"][i]
-            )
-
-            tmin = float(
-                d["temperature_2m_min"][i]
-            )
-
-            rain_pct = float(
-                d[
-                    "precipitation_probability_max"
-                ][i]
-            )
-
-            heat_pct = float(
-                np.clip(
-                    (
-                        tmax - 32
-                    )
-                    / 13
-                    * 100,
-                    0,
-                    100,
-                )
-            )
-
-            rows.append(
-                {
-                    "date": date,
-                    "tmax": tmax,
-                    "tmin": tmin,
-                    "pluie_pct": rain_pct,
-                    "chaleur_pct": heat_pct,
-                }
-            )
-
+        for i, date in enumerate(d["time"]):
+            tmax = float(d["temperature_2m_max"][i])
+            tmin = float(d["temperature_2m_min"][i])
+            rain_pct = float(d["precipitation_probability_max"][i])
+            heat_pct = float(np.clip((tmax - 32) / 13 * 100, 0, 100))
+            rows.append({
+                "date": date,
+                "tmax": tmax,
+                "tmin": tmin,
+                "pluie_pct": rain_pct,
+                "chaleur_pct": heat_pct,
+            })
         return rows, True
 
     except Exception:
-
         month = datetime.now().month
-
-        rainy = month in (
-            6,
-            7,
-            8,
-            9,
-            10,
-        )
+        rainy = month in (6, 7, 8, 9, 10)
 
         rows = []
-
         for i in range(7):
-
-            d = (
-                datetime.now()
-                + timedelta(days=i)
-            )
-
+            d = datetime.now() + timedelta(days=i)
             tmax = (
-                36
-                + np.random.uniform(-3, 4)
+                36 + np.random.uniform(-3, 4)
                 if not rainy
-                else 31
-                + np.random.uniform(-2, 3)
+                else 31 + np.random.uniform(-2, 3)
             )
-
-            rain_pct = (
-                np.random.uniform(40, 85)
-                if rainy
-                else np.random.uniform(0, 15)
-            )
-
-            heat_pct = float(
-                np.clip(
-                    (tmax - 32)
-                    / 13
-                    * 100,
-                    0,
-                    100,
-                )
-            )
-
-            rows.append(
-                {
-                    "date": d.strftime(
-                        "%Y-%m-%d"
-                    ),
-                    "tmax": round(
-                        tmax,
-                        1,
-                    ),
-                    "tmin": round(
-                        tmax - 8,
-                        1,
-                    ),
-                    "pluie_pct": round(
-                        rain_pct,
-                        0,
-                    ),
-                    "chaleur_pct": round(
-                        heat_pct,
-                        0,
-                    ),
-                }
-            )
-
+            rain_pct = np.random.uniform(40, 85) if rainy else np.random.uniform(0, 15)
+            heat_pct = float(np.clip((tmax - 32) / 13 * 100, 0, 100))
+            rows.append({
+                "date": d.strftime("%Y-%m-%d"),
+                "tmax": round(tmax, 1),
+                "tmin": round(tmax - 8, 1),
+                "pluie_pct": round(rain_pct, 0),
+                "chaleur_pct": round(heat_pct, 0),
+            })
         return rows, False
+
 
 # ============================================================================
 # INITIALISATION
@@ -1487,32 +946,55 @@ with st.sidebar:
     st.caption("CENTRE DE SUPERVISION ET DE SIMULATION")
     st.divider()
     nav_groups = [
-        ("SUPERVISION", [("🏠", "Tableau de bord", "🏠 Tableau de bord"), ("📋", "État des transformateurs", "📋 État des transformateurs"), ("🗺️", "Carte du parc", "🗺️ Carte du parc")]),
-        ("ANALYSE", [("📈", "Historique des pannes", "📈 Historique des pannes"), ("🌦️", "Météo & prévisions", "🌦️ Météo & prévisions")]),
-        ("SIMULATION", [("🖐️", "Mode manuel", "🖐️ Mode manuel"), ("🎲", "Simulation de pannes", "🎲 Simulation de pannes")]),
+        ("SUPERVISION", [
+            ("🏠", "Tableau de bord", "🏠 Tableau de bord"),
+            ("📋", "État des transformateurs", "📋 État des transformateurs"),
+            ("🗺️", "Carte du parc", "🗺️ Carte du parc"),
+        ]),
+        ("ANALYSE", [
+            ("📈", "Historique des pannes", "📈 Historique des pannes"),
+            ("🌦️", "Météo & prévisions", "🌦️ Météo & prévisions"),
+        ]),
+        ("SIMULATION", [
+            ("🖐️", "Mode manuel", "🖐️ Mode manuel"),
+            ("🎲", "Simulation de pannes", "🎲 Simulation de pannes"),
+        ]),
     ]
     for group_title, items in nav_groups:
         st.markdown(f"### {group_title}")
         for icon, label, target in items:
             active = st.session_state.section == target
-            if st.button(f"{'●' if active else '○'}  {icon}  {label}", key=f"nav_{target}", use_container_width=True, type="primary" if active else "secondary"):
+            if st.button(
+                f"{'●' if active else '○'}  {icon}  {label}",
+                key=f"nav_{target}",
+                use_container_width=True,
+                type="primary" if active else "secondary",
+            ):
                 st.session_state.section = target
                 st.rerun()
     st.divider()
     st.markdown("### CONTRÔLE")
-    if st.button("⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre", key="sidebar_run_toggle", use_container_width=True):
+    if st.button(
+        "⏸️ Mettre en pause" if st.session_state.running else "▶️ Reprendre",
+        key="sidebar_run_toggle",
+        use_container_width=True,
+    ):
         st.session_state.running = not st.session_state.running
         st.rerun()
     st.caption("Les paramètres avancés du moteur IA restent inchangés.")
 
 # Barre d'outils = actions système uniquement, sans seconde navigation.
 st.markdown('<div class="toolbar"><div class="toolbar-title">OUTILS SYSTÈME</div>', unsafe_allow_html=True)
-tb1, tb2, tb3, tb4 = st.columns([1.1,1.1,1.1,4.7])
+tb1, tb2, tb3, tb4 = st.columns([1.1, 1.1, 1.1, 4.7])
 with tb1:
     if st.button("🔄 Actualiser", key="tb_refresh", use_container_width=True):
         st.rerun()
 with tb2:
-    if st.button("⏸️ Pause" if st.session_state.running else "▶️ Reprendre", key="tb_pause", use_container_width=True):
+    if st.button(
+        "⏸️ Pause" if st.session_state.running else "▶️ Reprendre",
+        key="tb_pause",
+        use_container_width=True,
+    ):
         st.session_state.running = not st.session_state.running
         st.rerun()
 with tb3:
@@ -1521,21 +1003,28 @@ with tb3:
         st.rerun()
 with tb4:
     source = "🟢 Météo connectée" if live_ok else "🟠 Météo hors ligne — estimation"
-    st.markdown(f'<div style="text-align:right;padding:9px 8px;font-size:13px;">{source} · {ambient_live:.1f} °C · {humidity_live:.0f} % HR · {datetime.now().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="text-align:right;padding:9px 8px;font-size:13px;">{source} · '
+        f'{ambient_live:.1f} °C · {humidity_live:.0f} % HR · {datetime.now().strftime("%H:%M:%S")}</div>',
+        unsafe_allow_html=True,
+    )
 st.markdown('</div>', unsafe_allow_html=True)
 
 running_label = "EN SERVICE" if st.session_state.running else "EN PAUSE"
 model_label = "XGBoost chargé" if MODEL is not None else "Mode heuristique"
-s1, s2, s3, s4 = st.columns([1.2,1.8,2.0,2.0])
-with s1: st.markdown(f"**État :** {running_label}")
-with s2: st.markdown(f"**Moteur :** {model_label}")
-with s3: st.markdown(f"**Heure :** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-with s4: st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs")
+s1, s2, s3, s4 = st.columns([1.2, 1.8, 2.0, 2.0])
+with s1:
+    st.markdown(f"**État :** {running_label}")
+with s2:
+    st.markdown(f"**Moteur :** {model_label}")
+with s3:
+    st.markdown(f"**Heure :** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+with s4:
+    st.markdown(f"**Parc :** {len(TRANSFORMERS)} transformateurs")
 
 section = st.session_state.section
 
 # Routage exclusif : une seule page de contenu est rendue à chaque exécution.
-# IMPORTANT : le contenu d'une page ne doit jamais être appelé par une autre page.
 PAGE_META = {
     "🏠 Tableau de bord": ("🏠 TABLEAU DE BORD", "Vue globale du parc et indicateurs de supervision."),
     "🖐️ Mode manuel": ("🖐️ MODE MANUEL", "Réglage des grandeurs électriques et des conditions ambiantes."),
@@ -1546,16 +1035,21 @@ PAGE_META = {
     "🗺️ Carte du parc": ("🗺️ CARTE DU PARC", "Localisation et niveau de risque des transformateurs."),
 }
 page_title, page_subtitle = PAGE_META.get(section, PAGE_META[SECTIONS[0]])
-st.markdown(f'<div class="page-header"><h2>{page_title}</h2><p>{page_subtitle}</p></div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="page-header"><h2>{page_title}</h2><p>{page_subtitle}</p></div>',
+    unsafe_allow_html=True,
+)
+
 
 # ============================================================================
 # SECTION 0 — TABLEAU DE BORD
 # ============================================================================
+
 def render_dashboard():
     """Rendu exclusif de la section 🏠 Tableau de bord."""
     st.subheader("🏠 Vue opérationnelle du parc")
     st.caption(
-        "Cette vue synthétise le dernier état enregistré. "
+        "Cette vue synthétise le dernier état enregistré en mode manuel. "
         "La priorité est indicative et doit être calibrée avec les données "
         "réelles, la criticité des départs et les procédures d'exploitation."
     )
@@ -1563,9 +1057,7 @@ def render_dashboard():
     rows = []
     for t in TRANSFORMERS:
         status = st.session_state.last_status[t["id"]]
-        priority, priority_score = transformer_priority(
-            t, status["risk"]
-        )
+        priority, priority_score = transformer_priority(t, status["risk"])
         rows.append({
             "Transformateur": t["nom"],
             "Quartier": t["quartier"],
@@ -1582,50 +1074,34 @@ def render_dashboard():
     k1, k2, k3, k4 = st.columns(4)
     avg_risk = float(df_dash["Risque (%)"].mean()) if len(df_dash) else 0
     high_count = int((df_dash["Risque (%)"] >= 65).sum())
-    active_failures = sum(
-        1 for t in TRANSFORMERS
-        if st.session_state.last_status[t["id"]].get("failure")
-    )
+    watch_count = int((df_dash["Risque (%)"] >= 50).sum())
 
     k1.metric("Transformateurs suivis", len(TRANSFORMERS))
     k2.metric("Risque moyen", f"{avg_risk:.1f} %")
     k3.metric("Risque élevé", high_count)
-    k4.metric("Pannes simulées actives", active_failures)
+    k4.metric("À surveiller (≥ 50 %)", watch_count)
 
     st.dataframe(
-        df_dash.sort_values(
-            ["Score priorité", "Risque (%)"],
-            ascending=False,
-        ),
+        df_dash.sort_values(["Score priorité", "Risque (%)"], ascending=False),
         use_container_width=True,
         hide_index=True,
     )
 
     st.markdown("### 🚨 Alertes prioritaires")
 
-    alerts = df_dash.sort_values(
-        "Score priorité", ascending=False
-    ).head(3)
+    alerts = df_dash.sort_values("Score priorité", ascending=False).head(3)
 
     for _, row in alerts.iterrows():
+        msg = (
+            f"**{row['Transformateur']} — {row['Priorité']}** | "
+            f"Risque {row['Risque (%)']:.1f} % | {row['Tendance']}"
+        )
         if row["Score priorité"] >= 65:
-            st.error(
-                f"**{row['Transformateur']} — {row['Priorité']}** | "
-                f"Risque {row['Risque (%)']:.1f} % | "
-                f"{row['Tendance']}"
-            )
+            st.error(msg)
         elif row["Score priorité"] >= 45:
-            st.warning(
-                f"**{row['Transformateur']} — {row['Priorité']}** | "
-                f"Risque {row['Risque (%)']:.1f} % | "
-                f"{row['Tendance']}"
-            )
+            st.warning(msg)
         else:
-            st.info(
-                f"**{row['Transformateur']} — {row['Priorité']}** | "
-                f"Risque {row['Risque (%)']:.1f} % | "
-                f"{row['Tendance']}"
-            )
+            st.info(msg)
 
     st.markdown("### 📈 Tendances du parc")
 
@@ -1652,17 +1128,14 @@ def render_dashboard():
         fig.update_yaxes(range=[0, 100])
         fig.add_hline(y=50, line_dash="dash")
         fig.add_hline(y=65, line_dash="dash")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="dashboard_risk_chart")
 
         st.caption(
             "Les courbes représentent les valeurs enregistrées par "
             "l'application, et non une mesure SCADA temps réel."
         )
     else:
-        st.info(
-            "Lancez le mode manuel ou la simulation pour alimenter "
-            "l'historique."
-        )
+        st.info("Lancez le mode manuel pour alimenter l'historique.")
 
     st.markdown("### 🧠 Explication du risque")
 
@@ -1671,54 +1144,47 @@ def render_dashboard():
         [t["nom"] for t in TRANSFORMERS],
         key="dashboard_explain_transformer",
     )
-    selected = next(
-        t for t in TRANSFORMERS if t["nom"] == selected_name
-    )
+    selected = next(t for t in TRANSFORMERS if t["nom"] == selected_name)
     selected_status = st.session_state.last_status[selected["id"]]
     features = selected_status.get("features", {})
 
     if features:
-        explain_df = local_risk_sensitivity(
-            features,
-            selected["type"],
-        )
+        explain_df = local_risk_sensitivity(features, selected["type"])
         st.caption(
             f"Source : {explain_df.attrs.get('source', 'analyse locale')}. "
             "Une sensibilité locale n'est pas une causalité."
         )
-        st.dataframe(
-            explain_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(explain_df, use_container_width=True, hide_index=True)
     else:
-        st.info(
-            "Aucune mesure récente pour ce transformateur."
-        )
+        st.info("Aucune mesure récente pour ce transformateur.")
 
     st.markdown("### 📄 Rapport de simulation")
-    st.markdown('<div class="report-box">Le rapport est construit à partir des scénarios sélectionnés dans <b>Simulation de pannes</b>. Il contient les résultats, la phase de dégradation, les actions réseau, les directives techniques et un commentaire sur la conduite à tenir.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="report-box">Le rapport est construit à partir des scénarios sélectionnés dans '
+        '<b>Simulation de pannes</b>. Il contient les résultats, la phase de dégradation, les actions '
+        'réseau, les directives techniques et un commentaire sur la conduite à tenir.</div>',
+        unsafe_allow_html=True,
+    )
     if st.button("🎲 Ouvrir la simulation pour établir le rapport", key="dashboard_open_sim"):
         st.session_state.section = "🎲 Simulation de pannes"
         st.rerun()
-    report = build_intervention_report()
     st.download_button(
         "⬇️ Exporter le rapport complet de simulation",
-        data=report,
+        data=build_intervention_report(),
         file_name=f"rapport_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
         mime="text/plain",
         use_container_width=True,
+        key="dashboard_report_download",
     )
 
-    # ============================================================================
-    # SECTION 1 — MODE MANUEL
-    # ============================================================================
+
+# ============================================================================
+# SECTION 1 — MODE MANUEL
+# ============================================================================
 
 def render_manual_mode():
     """Rendu exclusif de la section 🖐️ Mode manuel."""
-    st.subheader(
-        "Mode manuel — paramètres électriques"
-    )
+    st.subheader("Mode manuel — paramètres électriques")
 
     st.caption(
         "Ce mode permet de modifier les grandeurs électriques et les conditions ambiantes. "
@@ -1728,82 +1194,49 @@ def render_manual_mode():
     st.markdown("### 🌡️ Conditions ambiantes du mode manuel")
     mc1, mc2 = st.columns([1.5, 1.0])
     with mc1:
-        manual_temp = st.slider("Température ambiante (°C)", 15.0, 50.0, float(st.session_state.manual_temperature), 0.5, key="manual_temperature_slider")
+        manual_temp = st.slider(
+            "Température ambiante (°C)", 15.0, 50.0,
+            float(st.session_state.manual_temperature), 0.5,
+            key="manual_temperature_slider",
+        )
         st.session_state.manual_temperature = manual_temp
         render_temperature_gauge(manual_temp)
     with mc2:
         season_options = list(SEASON_PRESETS.keys())
-        manual_season = st.selectbox("Type de saison", season_options, index=season_options.index(st.session_state.manual_season), key="manual_season_select")
+        manual_season = st.selectbox(
+            "Type de saison", season_options,
+            index=season_options.index(st.session_state.manual_season),
+            key="manual_season_select",
+        )
         st.session_state.manual_season = manual_season
-        st.info(f"🌦️ **{manual_season}**\n\nHumidité de référence : **{SEASON_PRESETS[manual_season]['humidity']} %**")
+        st.info(
+            f"🌦️ **{manual_season}**\n\n"
+            f"Humidité de référence : **{SEASON_PRESETS[manual_season]['humidity']} %**"
+        )
 
     cols = st.columns(3)
 
-    for col, t in zip(
-        cols,
-        TRANSFORMERS,
-    ):
-
+    for col, t in zip(cols, TRANSFORMERS):
         with col:
+            st.markdown(f"### {t['nom']} — {t['type']}")
+            st.caption(f"📍 {t['quartier']}")
 
-            st.markdown(
-                f"### {t['nom']} — {t['type']}"
-            )
-
-            st.caption(
-                f"📍 {t['quartier']}"
-            )
-
-            tgt = (
-                st.session_state
-                .manual_target[t["id"]]
-            )
+            tgt = st.session_state.manual_target[t["id"]]
 
             tgt["voltage"] = st.slider(
-                "Tension (p.u.)",
-                0.85,
-                1.15,
-                tgt["voltage"],
-                0.01,
-                key=f"v_{t['id']}",
+                "Tension (p.u.)", 0.85, 1.15, tgt["voltage"], 0.01, key=f"v_{t['id']}",
             )
-
             tgt["current_ratio"] = st.slider(
-                "Courant relatif",
-                0.2,
-                1.6,
-                tgt["current_ratio"],
-                0.02,
-                key=f"c_{t['id']}",
+                "Courant relatif", 0.2, 1.6, tgt["current_ratio"], 0.02, key=f"c_{t['id']}",
             )
-
             tgt["charge"] = st.slider(
-                "Charge relative",
-                0.2,
-                1.6,
-                tgt["charge"],
-                0.02,
-                key=f"ch_{t['id']}",
+                "Charge relative", 0.2, 1.6, tgt["charge"], 0.02, key=f"ch_{t['id']}",
             )
 
-            animate_towards_target(
-                t["id"]
-            )
+            animate_towards_target(t["id"])
+            eff = st.session_state.manual_effective[t["id"]]
 
-            eff = (
-                st.session_state
-                .manual_effective[t["id"]]
-            )
-
-            oil_temp = (
-                45
-                + eff["charge"] * 28
-                + max(
-                    0,
-                    manual_temp - 30,
-                )
-                * 0.6
-            )
+            oil_temp = 45 + eff["charge"] * 28 + max(0, manual_temp - 30) * 0.6
 
             features = {
                 "charge": eff["charge"],
@@ -1814,106 +1247,47 @@ def render_manual_mode():
                 "season_label": manual_season,
             }
 
-            risk = predict_risk(
-                features,
-                t["type"],
-            )
+            risk = predict_risk(features, t["type"])
 
-            push_history(
-                t["id"],
-                risk,
-                features,
-            )
-
-            slope, trend_cat = (
-                compute_trend(
-                    t["id"]
-                )
-            )
-
-            band_label, emoji = risk_band(
-                risk
-            )
+            push_history(t["id"], risk, features)
+            slope, trend_cat = compute_trend(t["id"])
+            band_label, emoji = risk_band(risk)
 
             update_last_status(
-                t["id"],
-                risk,
-                slope,
-                trend_cat,
-                band_label,
-                emoji,
-                source="manuel",
-                failure=None,
-                progress=0.0,
-                features=features,
+                t["id"], risk, slope, trend_cat, band_label, emoji,
+                source="manuel", failure=None, progress=0.0, features=features,
             )
 
-            st.metric(
-                "Risque électrique",
-                f"{risk:.1f} %",
-                delta=f"{slope:+.2f} pts/min",
-            )
+            st.metric("Risque électrique", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
 
-            priority, priority_score = transformer_priority(
-                t, risk
-            )
-            st.caption(
-                f"Priorité indicative : **{priority}** "
-                f"({priority_score:.1f}/100)"
-            )
+            priority, priority_score = transformer_priority(t, risk)
+            st.caption(f"Priorité indicative : **{priority}** ({priority_score:.1f}/100)")
 
             with st.expander("🧠 Pourquoi le risque évolue ?"):
-                explain_df = local_risk_sensitivity(
-                    features,
-                    t["type"],
-                )
+                explain_df = local_risk_sensitivity(features, t["type"])
                 st.caption(
                     f"Source : {explain_df.attrs.get('source', 'analyse locale')}. "
                     "Il s'agit d'une sensibilité locale, pas d'une causalité."
                 )
-                st.dataframe(
-                    explain_df,
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                st.dataframe(explain_df, use_container_width=True, hide_index=True)
 
             if risk >= 65:
-
-                st.error(
-                    f"🚨 **Risque élevé — "
-                    f"{risk:.1f} %**"
-                )
-
+                st.error(f"🚨 **Risque élevé — {risk:.1f} %**")
             elif risk >= 50:
-
-                st.warning(
-                    f"⚠️ **INTERPELLATION — "
-                    f"{risk:.1f} %**"
-                )
-
+                st.warning(f"⚠️ **INTERPELLATION — {risk:.1f} %**")
             elif risk >= 35:
-
-                st.warning(
-                    f"🟠 **Risque modéré — "
-                    f"{risk:.1f} %**"
-                )
-
+                st.warning(f"🟠 **Risque modéré — {risk:.1f} %**")
             else:
+                st.success(f"🟢 **Risque faible — {risk:.1f} %**")
 
-                st.success(
-                    f"🟢 **Risque faible — "
-                    f"{risk:.1f} %**"
-                )
 
-    # ============================================================================
-    # SECTION 2 — SIMULATION DE PANNES
-    # ============================================================================
+# ============================================================================
+# SECTION 2 — SIMULATION DE PANNES
+# ============================================================================
 
 def render_simulation_mode():
     """Rendu exclusif de la section 🎲 Simulation de pannes."""
-    st.subheader(
-        "Simulation — évolution progressive vers la panne"
-    )
+    st.subheader("Simulation — évolution progressive vers la panne")
 
     st.info(
         "🧠 **Moteur de risque : XGBoost**. La panne simulée fait évoluer "
@@ -1931,40 +1305,44 @@ def render_simulation_mode():
     # MÉTÉO SIMULÉE
     # ------------------------------------------------------------------------
 
-    st.markdown(
-        "#### 🌦️ Conditions climatiques simulées"
-    )
+    st.markdown("#### 🌦️ Conditions climatiques simulées")
 
     wc1, wc2, wc3 = st.columns([1.15, 1.0, 1.0])
 
     with wc1:
-        sim_temp = st.slider("Température ambiante simulée (°C)", 15.0, 50.0, float(st.session_state.simulation_temperature), 0.5, key="sim_temp_slider")
+        sim_temp = st.slider(
+            "Température ambiante simulée (°C)", 15.0, 50.0,
+            float(st.session_state.simulation_temperature), 0.5,
+            key="sim_temp_slider",
+        )
         st.session_state.simulation_temperature = sim_temp
         render_temperature_gauge(sim_temp, "Température simulée")
 
     with wc2:
         season_options = list(SEASON_PRESETS.keys())
-        sim_season = st.selectbox("Type de saison simulé", season_options, index=season_options.index(st.session_state.simulation_season), key="sim_season_select")
+        sim_season = st.selectbox(
+            "Type de saison simulé", season_options,
+            index=season_options.index(st.session_state.simulation_season),
+            key="sim_season_select",
+        )
         st.session_state.simulation_season = sim_season
-        st.info(f"🌦️ **{sim_season}**\n\nHumidité de référence : **{SEASON_PRESETS[sim_season]['humidity']} %**")
+        st.info(
+            f"🌦️ **{sim_season}**\n\n"
+            f"Humidité de référence : **{SEASON_PRESETS[sim_season]['humidity']} %**"
+        )
 
     with wc3:
         sim_weather_label = st.selectbox(
             "Conditions météo simulées",
-            list(
-                WEATHER_PRESETS.keys()
-            ),
+            list(WEATHER_PRESETS.keys()),
             key="sim_weather_select",
         )
 
-    weather = WEATHER_PRESETS[
-        sim_weather_label
-    ]
+    weather = WEATHER_PRESETS[sim_weather_label]
 
     st.caption(
-        "La température et les conditions choisies "
-        "influencent la simulation selon le type de "
-        "transformateur."
+        "La température et les conditions choisies influencent la simulation "
+        "selon le type de transformateur."
     )
 
     # ------------------------------------------------------------------------
@@ -1973,175 +1351,67 @@ def render_simulation_mode():
 
     cols = st.columns(3)
 
-    for col, t in zip(
-        cols,
-        TRANSFORMERS,
-    ):
-
+    for col, t in zip(cols, TRANSFORMERS):
         with col:
+            st.markdown(f"### {t['nom']} — {t['type']}")
+            st.caption(f"📍 {t['quartier']}")
 
-            st.markdown(
-                f"### {t['nom']} — {t['type']}"
-            )
+            options = ["Aucune (fonctionnement normal)"] + list(FAILURE_MODES.keys())
 
-            st.caption(
-                f"📍 {t['quartier']}"
-            )
-
-            options = [
-                "Aucune (fonctionnement normal)"
-            ] + list(
-                FAILURE_MODES.keys()
-            )
-
-            current_choice = (
-                st.session_state
-                .sim_failure
-                .get(t["id"])
-                or options[0]
-            )
+            current_choice = st.session_state.sim_failure.get(t["id"]) or options[0]
 
             choice = st.selectbox(
                 "Mode de panne simulé",
                 options,
-                index=(
-                    options.index(
-                        current_choice
-                    )
-                    if current_choice in options
-                    else 0
-                ),
+                index=options.index(current_choice) if current_choice in options else 0,
                 key=f"fail_{t['id']}",
             )
 
-            previous_choice = (
-                st.session_state
-                .sim_failure
-                .get(t["id"])
-                or options[0]
-            )
+            previous_choice = st.session_state.sim_failure.get(t["id"]) or options[0]
 
             # Nouvelle sélection
             if choice != previous_choice:
-
-                if (
-                    choice
-                    == options[0]
-                ):
-
-                    st.session_state.sim_failure[
-                        t["id"]
-                    ] = None
-
-                    st.session_state.sim_start_time[
-                        t["id"]
-                    ] = None
-
-                    # Retour à un état initial
-                    # proche de 0 %
-                    update_simulation_status(
-                        t["id"],
-                        2.0,
-                        0.0,
-                        "stable",
-                        "Faible",
-                        "🟢",
-                        source="simulation",
-                        failure=None,
-                        progress=0.0,
-                        features={},
-                    )
-
+                if choice == options[0]:
+                    st.session_state.sim_failure[t["id"]] = None
+                    st.session_state.sim_start_time[t["id"]] = None
+                    new_failure = None
                 else:
+                    st.session_state.sim_failure[t["id"]] = choice
+                    st.session_state.sim_start_time[t["id"]] = time.time()
+                    new_failure = choice
 
-                    st.session_state.sim_failure[
-                        t["id"]
-                    ] = choice
+                # Retour à un état initial proche de 0 %
+                update_simulation_status(
+                    t["id"], 2.0, 0.0, "stable", "Faible", "🟢",
+                    source="simulation", failure=new_failure,
+                    progress=0.0, features={},
+                )
 
-                    st.session_state.sim_start_time[
-                        t["id"]
-                    ] = time.time()
-
-                    # Une nouvelle panne commence
-                    # à presque 0 %.
-                    update_simulation_status(
-                        t["id"],
-                        2.0,
-                        0.0,
-                        "stable",
-                        "Faible",
-                        "🟢",
-                        source="simulation",
-                        failure=choice,
-                        progress=0.0,
-                        features={},
-                    )
-
-            active_failure = (
-                st.session_state
-                .sim_failure
-                .get(t["id"])
-            )
+            active_failure = st.session_state.sim_failure.get(t["id"])
 
             climate = TYPE_CLIMATE.get(
                 t["type"],
-                {
-                    "ambient_factor": 1.0,
-                    "humidity_factor": 1.0,
-                    "orage_voltage_bonus": 0.0,
-                },
+                {"ambient_factor": 1.0, "humidity_factor": 1.0, "orage_voltage_bonus": 0.0},
             )
 
             # ----------------------------------------------------------------
             # IMPACT DU CLIMAT
             # ----------------------------------------------------------------
 
-            oil_temp_climate_add = (
-                max(
-                    0.0,
-                    sim_temp - 30,
-                )
-                * 0.6
-                * climate[
-                    "ambient_factor"
-                ]
-            )
+            oil_temp_climate_add = max(0.0, sim_temp - 30) * 0.6 * climate["ambient_factor"]
 
-            humidity_climate = float(
-                np.clip(
-                    SEASON_PRESETS[sim_season]["humidity"]
-                    + weather[
-                        "humidity_bonus"
-                    ]
-                    * climate[
-                        "humidity_factor"
-                    ],
-                    5,
-                    100,
-                )
-            )
+            humidity_climate = float(np.clip(
+                SEASON_PRESETS[sim_season]["humidity"]
+                + weather["humidity_bonus"] * climate["humidity_factor"],
+                5, 100,
+            ))
 
-            voltage_climate_add = (
-                climate[
-                    "orage_voltage_bonus"
-                ]
-                if weather["orage"]
-                else 0.0
-            )
+            voltage_climate_add = climate["orage_voltage_bonus"] if weather["orage"] else 0.0
 
             base = {
                 "charge": 0.8,
-
-                "oil_temp": (
-                    45
-                    + 0.8 * 28
-                    + oil_temp_climate_add
-                ),
-
-                "voltage": (
-                    1.0
-                    + voltage_climate_add
-                ),
+                "oil_temp": 45 + 0.8 * 28 + oil_temp_climate_add,
+                "voltage": 1.0 + voltage_climate_add,
             }
 
             # ----------------------------------------------------------------
@@ -2149,109 +1419,29 @@ def render_simulation_mode():
             # ----------------------------------------------------------------
 
             if active_failure:
-
-                start = (
-                    st.session_state
-                    .sim_start_time
-                    .get(t["id"])
-                )
+                start = st.session_state.sim_start_time.get(t["id"])
 
                 if start is None:
-
                     start = time.time()
+                    st.session_state.sim_start_time[t["id"]] = start
 
-                    st.session_state.sim_start_time[
-                        t["id"]
-                    ] = start
+                elapsed = max(0.0, time.time() - start)
+                effective_time_constant = FAILURE_TIME_CONSTANT * TYPE_TIME_FACTOR.get(t["type"], 1.0)
+                progress = 1 - math.exp(-elapsed / effective_time_constant)
 
-                elapsed = max(
-                    0.0,
-                    time.time() - start,
-                )
+                effet = FAILURE_MODES[active_failure]["effet"]
 
-                effective_time_constant = (
-                    FAILURE_TIME_CONSTANT
-                    * TYPE_TIME_FACTOR.get(
-                        t["type"],
-                        1.0,
-                    )
-                )
-
-                progress = (
-                    1
-                    - math.exp(
-                        -elapsed
-                        / effective_time_constant
-                    )
-                )
-
-                effet = FAILURE_MODES[
-                    active_failure
-                ]["effet"]
-
-                charge = (
-                    base["charge"]
-                    + effet.get(
-                        "charge",
-                        0,
-                    )
-                    * progress
-                )
-
-                oil_temp = (
-                    base["oil_temp"]
-                    + effet.get(
-                        "oil_temp",
-                        0,
-                    )
-                    * progress
-                )
-
-                voltage = (
-                    base["voltage"]
-                    + effet.get(
-                        "voltage",
-                        0,
-                    )
-                    * progress
-                )
-
-                humidity_adj = (
-                    humidity_climate
-                    + effet.get(
-                        "humidity",
-                        0,
-                    )
-                    * progress
-                )
-
-                ambient_adj = (
-                    sim_temp
-                    + effet.get(
-                        "ambient",
-                        0,
-                    )
-                    * progress
-                )
-
+                charge = base["charge"] + effet.get("charge", 0) * progress
+                oil_temp = base["oil_temp"] + effet.get("oil_temp", 0) * progress
+                voltage = base["voltage"] + effet.get("voltage", 0) * progress
+                humidity_adj = humidity_climate + effet.get("humidity", 0) * progress
+                ambient_adj = sim_temp + effet.get("ambient", 0) * progress
             else:
-
                 progress = 0.0
-
                 charge = base["charge"]
-
-                oil_temp = base[
-                    "oil_temp"
-                ]
-
-                voltage = base[
-                    "voltage"
-                ]
-
-                humidity_adj = (
-                    humidity_climate
-                )
-
+                oil_temp = base["oil_temp"]
+                voltage = base["voltage"]
+                humidity_adj = humidity_climate
                 ambient_adj = sim_temp
 
             # ----------------------------------------------------------------
@@ -2268,25 +1458,10 @@ def render_simulation_mode():
             }
 
             # ----------------------------------------------------------------
-            # CALCUL DU RISQUE — XGBOOST
+            # CALCUL DU RISQUE — XGBOOST (même moteur que le mode manuel)
             # ----------------------------------------------------------------
 
-            # Même moteur de prédiction que le mode manuel.
-            # La simulation ne fabrique plus directement un pourcentage
-            # de risque avec progress**1.55.
-            model_features = {
-                "charge": charge,
-                "oil_temp": oil_temp,
-                "ambient": ambient_adj,
-                "humidity": humidity_adj,
-                "voltage": voltage,
-                "season_label": sim_season,
-            }
-
-            risk = predict_risk(
-                model_features,
-                t["type"],
-            )
+            risk = predict_risk(features, t["type"])
 
             # Bonus climatique conservé comme facteur de contexte.
             climate_bonus = 0.0
@@ -2300,99 +1475,41 @@ def render_simulation_mode():
             risk = float(np.clip(risk + climate_bonus, 0, 100))
 
             # ----------------------------------------------------------------
-            # HISTORIQUE
+            # HISTORIQUE ET ÉTAT (isolés de la supervision)
             # ----------------------------------------------------------------
 
-            push_simulation_history(
-                t["id"],
-                risk,
-                features,
-            )
-
-            slope, trend_cat = (
-                compute_simulation_trend(
-                    t["id"]
-                )
-            )
-
-            band_label, emoji = (
-                risk_band(risk)
-            )
-
-            # ----------------------------------------------------------------
-            # SAUVEGARDE ÉTAT POUR LA CARTE
-            # ----------------------------------------------------------------
+            push_simulation_history(t["id"], risk, features)
+            slope, trend_cat = compute_simulation_trend(t["id"])
+            band_label, emoji = risk_band(risk)
 
             update_simulation_status(
-                t["id"],
-                risk,
-                slope,
-                trend_cat,
-                band_label,
-                emoji,
-                source="simulation",
-                failure=active_failure,
-                progress=progress,
-                features=features,
+                t["id"], risk, slope, trend_cat, band_label, emoji,
+                source="simulation", failure=active_failure,
+                progress=progress, features=features,
             )
-
 
             # ----------------------------------------------------------------
             # AFFICHAGE RISQUE
             # ----------------------------------------------------------------
 
-            st.metric(
-                "Risque courant",
-                f"{risk:.1f} %",
-                delta=f"{slope:+.2f} pts/min",
-            )
-
-            # ----------------------------------------------------------------
-            # ALERTES
-            # ----------------------------------------------------------------
+            st.metric("Risque courant", f"{risk:.1f} %", delta=f"{slope:+.2f} pts/min")
 
             if risk >= 65:
-
-                st.error(
-                    f"🚨 **ALERTE CRITIQUE — "
-                    f"{risk:.1f} %** : "
-                    f"le niveau de risque est élevé."
-                )
-
+                st.error(f"🚨 **ALERTE CRITIQUE — {risk:.1f} %** : le niveau de risque est élevé.")
             elif risk >= 50:
-
                 st.warning(
-                    f"⚠️ **INTERPELLATION — "
-                    f"{risk:.1f} %** : "
-                    f"le risque vient de franchir "
-                    f"le seuil de 50 %."
+                    f"⚠️ **INTERPELLATION — {risk:.1f} %** : "
+                    f"le risque vient de franchir le seuil de 50 %."
                 )
-
             elif risk >= 35:
-
-                st.warning(
-                    f"🟠 **Vigilance — "
-                    f"{risk:.1f} %** : "
-                    f"la dérive devient significative."
-                )
-
+                st.warning(f"🟠 **Vigilance — {risk:.1f} %** : la dérive devient significative.")
             else:
-
-                st.success(
-                    f"🟢 **Risque faible — "
-                    f"{risk:.1f} %**"
-                )
+                st.success(f"🟢 **Risque faible — {risk:.1f} %**")
 
             st.caption(
-                f"🌡️ T° huile estimée : "
-                f"{oil_temp:.1f} °C · "
-                f"💧 Humidité perçue : "
-                f"{humidity_adj:.0f} %"
-                + (
-                    " · ⚡ orage actif"
-                    if weather["orage"]
-                    else ""
-                )
+                f"🌡️ T° huile estimée : {oil_temp:.1f} °C · "
+                f"💧 Humidité perçue : {humidity_adj:.0f} %"
+                + (" · ⚡ orage actif" if weather["orage"] else "")
             )
 
             # ----------------------------------------------------------------
@@ -2400,377 +1517,161 @@ def render_simulation_mode():
             # ----------------------------------------------------------------
 
             if active_failure:
-
                 st.progress(
-                    min(
-                        1.0,
-                        progress,
-                    ),
-                    text=(
-                        "Progression de la panne : "
-                        f"{progress * 100:.0f} %"
-                    ),
+                    min(1.0, progress),
+                    text=f"Progression de la panne : {progress * 100:.0f} %",
                 )
 
-                phase_label, phase_kind, phase_text = (
-                    failure_phase(
-                        progress
-                    )
-                )
+                phase_label, phase_kind, phase_text = failure_phase(progress)
+                getattr(st, phase_kind)(f"{phase_label} — {phase_text}")
 
-                getattr(
-                    st,
-                    phase_kind,
-                )(
-                    f"{phase_label} — "
-                    f"{phase_text}"
-                )
+                st.markdown("**Pronostic :** " + prognosis_text(risk, slope, active_failure))
 
-                st.markdown(
-                    "**Pronostic :** "
-                    + prognosis_text(
-                        risk,
-                        slope,
-                        active_failure,
-                    )
-                )
+                st.markdown("**Actions réseau recommandées :**")
+                for action in NETWORK_ACTIONS_BY_FAILURE.get(active_failure, []):
+                    st.markdown(f"- {action}")
+                st.markdown("- " + NETWORK_ACTIONS_BY_TYPE.get(t["type"], ""))
 
-                st.markdown(
-                    "**Actions réseau recommandées :**"
-                )
-
-                for action in (
-                    NETWORK_ACTIONS_BY_FAILURE.get(
-                        active_failure,
-                        [],
-                    )
-                ):
-
-                    st.markdown(
-                        f"- {action}"
-                    )
-
-                st.markdown(
-                    "- "
-                    + NETWORK_ACTIONS_BY_TYPE.get(
-                        t["type"],
-                        "",
-                    )
-                )
-
-                with st.expander(
-                    "🩺 Diagnostic et directives correctives ciblées"
-                ):
-
-                    for directive in (
-                        FAILURE_MODES[
-                            active_failure
-                        ]["directives"]
-                    ):
-
-                        st.markdown(
-                            f"- {directive}"
-                        )
-
+                with st.expander("🩺 Diagnostic et directives correctives ciblées"):
+                    for directive in FAILURE_MODES[active_failure]["directives"]:
+                        st.markdown(f"- {directive}")
             else:
-
-                st.success(
-                    "🟢 Fonctionnement normal"
-                )
+                st.success("🟢 Fonctionnement normal")
 
             # ----------------------------------------------------------------
             # GRAPHIQUE
             # ----------------------------------------------------------------
 
-            hist = list(
-                st.session_state
-                .simulation_history[t["id"]]
-            )
+            hist = list(st.session_state.simulation_history[t["id"]])
 
             if len(hist) >= 2:
+                dfh = pd.DataFrame(hist)
 
-                dfh = pd.DataFrame(
-                    hist
-                )
-
-                fig = px.line(
-                    dfh,
-                    x="t",
-                    y="risk",
-                    title="Historique du risque",
-                )
-
-                # Ligne seuil 50 %
+                fig = px.line(dfh, x="t", y="risk", title="Historique du risque")
                 fig.add_hline(
-                    y=50,
-                    line_dash="dash",
-                    line_color="orange",
+                    y=50, line_dash="dash", line_color="orange",
                     annotation_text="Interpellation 50 %",
                 )
-
-                # Ligne seuil 65 %
                 fig.add_hline(
-                    y=65,
-                    line_dash="dash",
-                    line_color="red",
+                    y=65, line_dash="dash", line_color="red",
                     annotation_text="Risque élevé 65 %",
                 )
-
                 fig.update_layout(
                     height=200,
-                    margin=dict(
-                        l=10,
-                        r=10,
-                        t=40,
-                        b=10,
-                    ),
+                    margin=dict(l=10, r=10, t=40, b=10),
                     showlegend=False,
-                    yaxis=dict(
-                        range=[0, 100]
-                    ),
+                    yaxis=dict(range=[0, 100]),
                 )
-
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True,
-                    key=f"simhist_{t['id']}",
-                )
+                st.plotly_chart(fig, use_container_width=True, key=f"simhist_{t['id']}")
 
     # ------------------------------------------------------------------------
     # RAPPORT COMPLET — uniquement dans le contexte simulation
     # ------------------------------------------------------------------------
     st.markdown("### 📄 Rapport complet et conduite à tenir")
-    st.markdown('<div class="report-box">Ce rapport est calculé à partir des scénarios de panne actuellement sélectionnés. Il ne mélange pas les données du mode manuel avec la simulation.</div>', unsafe_allow_html=True)
-    sim_report = build_intervention_report()
+    st.markdown(
+        '<div class="report-box">Ce rapport est calculé à partir des scénarios de panne actuellement '
+        'sélectionnés. Il ne mélange pas les données du mode manuel avec la simulation.</div>',
+        unsafe_allow_html=True,
+    )
     st.download_button(
         "⬇️ Générer le rapport complet de cette simulation",
-        data=sim_report,
+        data=build_intervention_report(),
         file_name=f"rapport_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
         mime="text/plain",
         use_container_width=True,
         key="simulation_report_download",
     )
 
-    # ============================================================================
-    # SECTION 3 — ÉTAT DES TRANSFORMATEURS
-    # ============================================================================
+
+# ============================================================================
+# SECTION 3 — ÉTAT DES TRANSFORMATEURS
+# ============================================================================
 
 def render_transformer_status():
     """Rendu exclusif de la section 📋 État des transformateurs."""
-    st.subheader(
-        "État courant du parc"
-    )
+    st.subheader("État courant du parc")
 
     rows = []
-
     for t in TRANSFORMERS:
+        status = st.session_state.last_status[t["id"]]
+        rows.append({
+            "N°": t["id"],
+            "Nom": t["nom"],
+            "Type": t["type"],
+            "Quartier": t["quartier"],
+            "Risque (%)": round(status["risk"], 1),
+            "Statut": f"{status['emoji']} {status['status']}",
+            "Source": status["source"],
+            "Tendance": status["trend_cat"],
+        })
 
-        status = (
-            st.session_state
-            .last_status[t["id"]]
-        )
-
-        risk = status["risk"]
-
-        rows.append(
-            {
-                "N°": t["id"],
-                "Nom": t["nom"],
-                "Type": t["type"],
-                "Quartier": t["quartier"],
-                "Risque (%)": round(
-                    risk,
-                    1,
-                ),
-                "Statut": (
-                    f"{status['emoji']} "
-                    f"{status['status']}"
-                ),
-                "Source": status[
-                    "source"
-                ],
-                "Panne simulée": (
-                    status["failure"]
-                    or "Aucune"
-                ),
-                "Progression panne (%)": (
-                    round(
-                        status[
-                            "progress"
-                        ]
-                        * 100,
-                        1,
-                    )
-                    if status["failure"]
-                    else "—"
-                ),
-                "Tendance": status[
-                    "trend_cat"
-                ],
-            }
-        )
-
-    st.dataframe(
-        pd.DataFrame(rows),
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.caption(
-        "Le tableau utilise le dernier état enregistré "
-        "pour chaque transformateur, y compris l'état "
-        "issu de la simulation."
+        "Le tableau utilise le dernier état enregistré en mode manuel. "
+        "La simulation de pannes est isolée et n'apparaît pas ici."
     )
 
-    # ============================================================================
-    # SECTION 4 — HISTORIQUE DES PANNES
-    # ============================================================================
+
+# ============================================================================
+# SECTION 4 — HISTORIQUE DES PANNES
+# ============================================================================
 
 def render_failure_history():
     """Rendu exclusif de la section 📈 Historique des pannes."""
-    st.subheader(
-        "Historique des épisodes à risque élevé"
-    )
+    st.subheader("Historique des épisodes à risque élevé")
 
     if not st.session_state.event_log:
+        st.info("Aucun épisode à risque élevé enregistré pour l'instant.")
+        return
 
-        st.info(
-            "Aucun épisode à risque élevé "
-            "enregistré pour l'instant."
-        )
+    rows = []
+    for ev in reversed(st.session_state.event_log):
+        fin = ev["fin"]
+        duree = ((fin or datetime.now()) - ev["debut"]).total_seconds() / 60
+        rows.append({
+            "Transformateur": ev["nom"],
+            "Cause": ev["type_panne"],
+            "Début": ev["debut"].strftime("%H:%M:%S"),
+            "Fin": fin.strftime("%H:%M:%S") if fin else "en cours",
+            "Durée (min)": round(duree, 1),
+            "Risque max (%)": round(ev["risque_max"], 1),
+        })
 
-    else:
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        rows = []
 
-        for ev in reversed(
-            st.session_state.event_log
-        ):
-
-            fin = ev["fin"]
-
-            duree = (
-                (
-                    fin
-                    or datetime.now()
-                )
-                - ev["debut"]
-            ).total_seconds() / 60
-
-            rows.append(
-                {
-                    "Transformateur": ev[
-                        "nom"
-                    ],
-                    "Cause": ev[
-                        "type_panne"
-                    ],
-                    "Début": ev[
-                        "debut"
-                    ].strftime(
-                        "%H:%M:%S"
-                    ),
-                    "Fin": (
-                        fin.strftime(
-                            "%H:%M:%S"
-                        )
-                        if fin
-                        else "en cours"
-                    ),
-                    "Durée (min)": round(
-                        duree,
-                        1,
-                    ),
-                    "Risque max (%)": round(
-                        ev[
-                            "risque_max"
-                        ],
-                        1,
-                    ),
-                }
-            )
-
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    # ============================================================================
-    # SECTION 5 — MÉTÉO
-    # ============================================================================
+# ============================================================================
+# SECTION 5 — MÉTÉO
+# ============================================================================
 
 def render_weather():
     """Rendu exclusif de la section 🌦️ Météo & prévisions."""
-    st.subheader(
-        "Météo en direct et prévisions à 7 jours"
-    )
+    st.subheader("Météo en direct et prévisions à 7 jours")
 
-    source = (
-        "en direct (Open-Meteo)"
-        if live_ok
-        else "estimation saisonnière (hors ligne)"
-    )
+    source = "en direct (Open-Meteo)" if live_ok else "estimation saisonnière (hors ligne)"
 
     c1, c2 = st.columns(2)
+    c1.metric(f"Température actuelle — {source}", f"{ambient_live:.1f} °C")
+    c2.metric("Humidité relative actuelle", f"{humidity_live:.0f} %")
 
-    c1.metric(
-        f"Température actuelle — {source}",
-        f"{ambient_live:.1f} °C",
-    )
-
-    c2.metric(
-        "Humidité relative actuelle",
-        f"{humidity_live:.0f} %",
-    )
-
-    rows, forecast_ok = (
-        get_weekly_forecast()
-    )
+    rows, forecast_ok = get_weekly_forecast()
 
     st.caption(
         "Prévisions "
-        + (
-            "en direct (Open-Meteo)."
-            if forecast_ok
-            else
-            "estimées hors ligne."
-        )
+        + ("en direct (Open-Meteo)." if forecast_ok else "estimées hors ligne.")
     )
 
-    df = pd.DataFrame(
-        rows
-    )
-
-    df["Jour"] = (
-        pd.to_datetime(
-            df["date"]
-        ).dt.strftime(
-            "%a %d/%m"
-        )
-    )
+    df = pd.DataFrame(rows)
+    df["Jour"] = pd.to_datetime(df["date"]).dt.strftime("%a %d/%m")
 
     st.dataframe(
-        df[
-            [
-                "Jour",
-                "tmax",
-                "tmin",
-                "pluie_pct",
-                "chaleur_pct",
-            ]
-        ].rename(
-            columns={
-                "tmax": "T° max (°C)",
-                "tmin": "T° min (°C)",
-                "pluie_pct": (
-                    "Probabilité de pluie (%)"
-                ),
-                "chaleur_pct": (
-                    "Indice de forte chaleur (%)"
-                ),
-            }
-        ),
+        df[["Jour", "tmax", "tmin", "pluie_pct", "chaleur_pct"]].rename(columns={
+            "tmax": "T° max (°C)",
+            "tmin": "T° min (°C)",
+            "pluie_pct": "Probabilité de pluie (%)",
+            "chaleur_pct": "Indice de forte chaleur (%)",
+        }),
         use_container_width=True,
         hide_index=True,
     )
@@ -2778,246 +1679,89 @@ def render_weather():
     fig = px.bar(
         df,
         x="Jour",
-        y=[
-            "pluie_pct",
-            "chaleur_pct",
-        ],
+        y=["pluie_pct", "chaleur_pct"],
         barmode="group",
-        labels={
-            "value": "%",
-            "variable": "Indicateur",
-        },
-        title=(
-            "Probabilité de pluie et indice "
-            "de forte chaleur — 7 prochains jours"
-        ),
+        labels={"value": "%", "variable": "Indicateur"},
+        title="Probabilité de pluie et indice de forte chaleur — 7 prochains jours",
     )
+    st.plotly_chart(fig, use_container_width=True, key="weather_forecast_chart")
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-    )
 
-    # ============================================================================
-    # SECTION 6 — CARTE DU PARC
-    # ============================================================================
+# ============================================================================
+# SECTION 6 — CARTE DU PARC
+# ============================================================================
 
 def render_map():
     """Rendu exclusif de la section 🗺️ Carte du parc."""
-    st.subheader(
-        "Carte du parc — état réel des transformateurs"
-    )
+    st.subheader("Carte du parc — dernier état enregistré")
 
     st.info(
-        "La carte utilise le dernier état enregistré "
-        "pour chaque transformateur. Par exemple, si TR-01 "
-        "a atteint 60 % pendant une simulation, la carte "
-        "conserve 60 % et affiche le repère en orange."
+        "La carte utilise le dernier état enregistré en mode manuel pour "
+        "chaque transformateur. La simulation de pannes est isolée et "
+        "n'est pas affichée ici."
     )
 
     rows = []
-
     for t in TRANSFORMERS:
+        status = st.session_state.last_status[t["id"]]
+        risk = float(status["risk"])
+        priority, priority_score = transformer_priority(t, risk)
+        etat = "Mode manuel" if status["source"] == "manuel" else "État initial"
 
-        status = (
-            st.session_state
-            .last_status[t["id"]]
-        )
+        rows.append({
+            "N°": t["id"],
+            "Nom": t["nom"],
+            "Type": t["type"],
+            "Quartier": t["quartier"],
+            "Risque (%)": round(risk, 1),
+            "Statut": f"{status['emoji']} {status['status']}",
+            "État": etat,
+            "lat": t["lat"],
+            "lon": t["lon"],
+            "risk": risk,
+            # Colonnes dédiées à l'infobulle (noms simples, sans espaces)
+            "tip_nom": f"{t['nom']} ({t['type']}) — {t['quartier']}",
+            "tip_risque": f"Risque : {risk:.1f} % — {status['emoji']} {status['status']}",
+            "tip_priorite": f"Priorité : {priority} ({priority_score:.1f}/100)",
+            "tip_etat": etat,
+        })
 
-        risk = float(
-            status["risk"]
-        )
-
-        band_label = status[
-            "status"
-        ]
-
-        emoji = status[
-            "emoji"
-        ]
-
-        source = status[
-            "source"
-        ]
-
-        failure = status[
-            "failure"
-        ]
-
-        if source == "simulation":
-
-            if failure:
-
-                etat = (
-                    f"Simulation : "
-                    f"{failure}"
-                )
-
-            else:
-
-                etat = (
-                    "Simulation — "
-                    "fonctionnement normal"
-                )
-
-        elif source == "manuel":
-
-            etat = (
-                "Mode manuel"
-            )
-
-        else:
-
-            etat = (
-                "État initial"
-            )
-
-        rows.append(
-            {
-                "N°": t["id"],
-                "Nom": t["nom"],
-                "Type": t["type"],
-                "Quartier": t[
-                    "quartier"
-                ],
-                "Risque (%)": round(
-                    risk,
-                    1,
-                ),
-                "Statut": (
-                    f"{emoji} "
-                    f"{band_label}"
-                ),
-                "État": etat,
-                "lat": t["lat"],
-                "lon": t["lon"],
-                "risk": risk,
-            }
-        )
-
-    df_parc = pd.DataFrame(
-        rows
-    )
-
-    # ------------------------------------------------------------------------
-    # TABLEAU AVANT LA CARTE
-    # ------------------------------------------------------------------------
+    df_parc = pd.DataFrame(rows)
 
     st.dataframe(
-        df_parc[
-            [
-                "N°",
-                "Nom",
-                "Type",
-                "Quartier",
-                "Risque (%)",
-                "Statut",
-                "État",
-            ]
-        ],
+        df_parc[["N°", "Nom", "Type", "Quartier", "Risque (%)", "Statut", "État"]],
         use_container_width=True,
         hide_index=True,
     )
 
-    # ------------------------------------------------------------------------
-    # COULEURS
-    # ------------------------------------------------------------------------
-
     def color_for(risk):
-
         if risk >= 65:
-
-            # ROUGE
-            return [
-                220,
-                40,
-                40,
-                240,
-            ]
-
+            return [220, 40, 40, 240]      # rouge
         elif risk >= 50:
-
-            # ORANGE
-            return [
-                255,
-                140,
-                0,
-                240,
-            ]
-
+            return [255, 140, 0, 240]      # orange
         elif risk >= 35:
+            return [245, 200, 40, 240]     # jaune
+        return [40, 170, 70, 240]          # vert
 
-            # JAUNE
-            return [
-                245,
-                200,
-                40,
-                240,
-            ]
-
-        else:
-
-            # VERT
-            return [
-                40,
-                170,
-                70,
-                240,
-            ]
-
-    df_parc["color"] = (
-        df_parc["risk"]
-        .apply(color_for)
-    )
-
-    # ------------------------------------------------------------------------
-    # CARTE
-    # ------------------------------------------------------------------------
+    df_parc["color"] = df_parc["risk"].apply(color_for)
 
     layer = pdk.Layer(
         "ScatterplotLayer",
-
         data=df_parc,
-
         get_position="[lon, lat]",
-
         get_fill_color="color",
-
         get_radius=35,
-
         radius_min_pixels=7,
-
         radius_max_pixels=16,
-
         stroked=True,
-
-        get_line_color=[
-            30,
-            30,
-            30,
-            230,
-        ],
-
+        get_line_color=[30, 30, 30, 230],
         line_width_min_pixels=2,
-
         pickable=True,
     )
 
-    view_state = pdk.ViewState(
-        latitude=OUAGA_LAT,
-        longitude=OUAGA_LON,
-        zoom=13.5,
-        pitch=0,
-    )
+    view_state = pdk.ViewState(latitude=OUAGA_LAT, longitude=OUAGA_LON, zoom=13.5, pitch=0)
 
-    tooltip = {
-        "text": (
-            "{Nom} ({Type}) — {Quartier}\n"
-            "Risque : {Risque (%) } % — {Statut}\n"
-            "Priorité : {Priorité} ({Score priorité})\n"
-            "{État}"
-        )
-    }
+    tooltip = {"text": "{tip_nom}\n{tip_risque}\n{tip_priorite}\n{tip_etat}"}
 
     st.pydeck_chart(
         pdk.Deck(
@@ -3029,68 +1773,33 @@ def render_map():
         )
     )
 
-    # ------------------------------------------------------------------------
-    # LÉGENDE
-    # ------------------------------------------------------------------------
-
-    st.markdown(
-        "### Légende du risque"
-    )
+    st.markdown("### Légende du risque")
 
     lc1, lc2, lc3, lc4 = st.columns(4)
+    lc1.success("🟢 **0–34 %** — Faible")
+    lc2.warning("🟡 **35–49 %** — Modéré")
+    lc3.warning("🟠 **50–64 %** — Interpellation")
+    lc4.error("🔴 **65–100 %** — Élevé")
 
-    lc1.success(
-        "🟢 **0–34 %** — Faible"
-    )
-
-    lc2.warning(
-        "🟡 **35–49 %** — Modéré"
-    )
-
-    lc3.warning(
-        "🟠 **50–64 %** — Interpellation"
-    )
-
-    lc4.error(
-        "🔴 **65–100 %** — Élevé"
-    )
-
-    st.markdown(
-        "### Priorité indicative d'intervention"
-    )
+    st.markdown("### Priorité indicative d'intervention")
     pc1, pc2, pc3, pc4 = st.columns(4)
     pc1.error("**P1** — Intervention immédiate")
     pc2.warning("**P2** — Intervention prioritaire")
     pc3.warning("**P3** — Surveillance renforcée")
     pc4.info("**P4** — Surveillance normale")
 
-    # ------------------------------------------------------------------------
-    # OBSTACLES
-    # ------------------------------------------------------------------------
-
-    st.markdown(
-        "### Obstacles et contraintes d'accès"
-    )
+    st.markdown("### Obstacles et contraintes d'accès")
 
     for t in TRANSFORMERS:
+        with st.expander(f"{t['nom']} — {t['quartier']} ({t['type']})"):
+            for obstacle in t["obstacles"]:
+                st.markdown(f"- {obstacle}")
 
-        with st.expander(
-            f"{t['nom']} — "
-            f"{t['quartier']} "
-            f"({t['type']})"
-        ):
-
-            for obstacle in (
-                t["obstacles"]
-            ):
-
-                st.markdown(
-                    f"- {obstacle}"
-                )
 
 # ============================================================================
 # ROUTEUR UNIQUE — UNE SEULE PAGE DE CONTENU À LA FOIS
 # ============================================================================
+
 SECTION_RENDERERS = {
     "🏠 Tableau de bord": render_dashboard,
     "🖐️ Mode manuel": render_manual_mode,
@@ -3101,30 +1810,45 @@ SECTION_RENDERERS = {
     "🗺️ Carte du parc": render_map,
 }
 
+
 def render_active_page():
     """Routeur strict : UNE et une seule fonction de page est exécutée."""
-    active = st.session_state.get("section", "🏠 Tableau de bord")
+    active = st.session_state.get("section", SECTIONS[0])
     renderer = SECTION_RENDERERS.get(active)
     if renderer is None:
-        active = "🏠 Tableau de bord"
+        active = SECTIONS[0]
         st.session_state.section = active
         renderer = SECTION_RENDERERS[active]
 
-    # Marqueur technique volontairement visible pour vérifier la version déployée.
     st.markdown(
         f'<div class="page-runtime-marker">PAGE ACTIVE : {active}</div>',
         unsafe_allow_html=True,
     )
     renderer()
 
-render_active_page()
+
+# ============================================================================
+# ACTUALISATION TEMPS RÉEL — PAR FRAGMENT
+# ============================================================================
+# Le contenu de la page se rafraîchit toutes les secondes SANS relancer tout
+# le script avec time.sleep() + st.rerun(). Ainsi chaque changement de page
+# termine normalement son exécution et Streamlit supprime les éléments de
+# l'ancienne page (plus d'éléments « fantômes » du mode manuel dans la
+# simulation). Nécessite Streamlit >= 1.37.
+
+@st.fragment(run_every=1 if st.session_state.running else None)
+def live_page():
+    render_active_page()
+
+
+live_page()
 
 # ============================================================================
 # BARRE D'ÉTAT INFÉRIEURE — STYLE LOGICIEL PC
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.2 — ROUTAGE SÉPARÉ</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.3 — ROUTAGE SÉPARÉ</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
@@ -3139,14 +1863,3 @@ st.caption(
     "la connexion est disponible. Les priorités, seuils et extrapolations "
     "doivent être validés avant toute utilisation opérationnelle."
 )
-
-# ============================================================================
-# ACTUALISATION TEMPS RÉEL
-# ============================================================================
-
-if st.session_state.running:
-
-    time.sleep(1)
-
-    st.rerun()
-
