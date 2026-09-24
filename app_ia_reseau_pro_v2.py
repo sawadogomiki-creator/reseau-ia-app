@@ -1723,7 +1723,7 @@ def render_manual_mode():
         ("Humidité", f"{humidity:.0f} %"), ("Déséquilibre", f"{imbalance:.0f} %")]
     st.markdown("<div class='sim-strip'>" + "".join(f"<div class='sim-cell'><div class='sim-label'>{a}</div><div class='sim-val'>{b}</div></div>" for a,b in vals) + "</div>", unsafe_allow_html=True)
 
-    hist = list(st.session_state.manual_history.get(tid, []))
+    hist = list(st.session_state.history.get(tid, []))
     if len(hist) >= 2:
         dfh = pd.DataFrame(hist).tail(35)
         fig = px.line(dfh, x="t", y="risk", markers=True)
