@@ -92,6 +92,18 @@ div[data-testid="stMetric"]:after{content:"";position:absolute;right:-25px;botto
 @keyframes techPulse{0%,100%{opacity:.35}50%{opacity:1}}
 @keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.35}}
 @media(max-width:900px){.desktop-subtitle{display:none}.block-container{padding-left:12px;padding-right:12px}}
+
+.compact-head{display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(100deg,#061e3e,#0878bd);color:white;border-radius:12px;padding:10px 14px;margin-bottom:12px;}
+.compact-head-title{font-size:17px;font-weight:850}.compact-head-sub{font-size:10px;opacity:.82;letter-spacing:.8px;text-transform:uppercase}
+.control-panel{background:#f4f8fb;border:1px solid #d5e1eb;border-radius:12px;padding:10px;}
+.control-title{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;font-weight:850;color:#5c7892;margin-bottom:6px}
+.ai-panel{background:linear-gradient(145deg,#071d36,#0b426b);color:#edf8ff;border:1px solid #1a6a96;border-radius:12px;padding:12px;min-height:220px;}
+.ai-big{font-size:38px;font-weight:900;line-height:1}.ai-small{font-size:10px;color:#a9cce0;text-transform:uppercase;letter-spacing:1px}.ai-line{height:1px;background:rgba(255,255,255,.12);margin:9px 0}
+.ai-badge{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:800;background:rgba(255,255,255,.10);margin-top:5px}
+.sim-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin-top:9px}
+.sim-cell{background:#f7fafc;border:1px solid #d8e4ed;border-radius:9px;padding:7px 8px}.sim-label{font-size:9px;color:#70879b;text-transform:uppercase;letter-spacing:.7px}.sim-val{font-size:16px;font-weight:850;color:#0a3155}
+.interpret-box{background:#edf8ff;border-left:4px solid #0b8ed0;border-radius:9px;padding:9px 11px;font-size:12px;color:#173a55}
+@media(max-width:1100px){.sim-strip{grid-template-columns:repeat(3,minmax(0,1fr));}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1611,133 +1623,118 @@ def render_dashboard():
 # SECTION 1 — MODE MANUEL
 # ============================================================================
 
+def _compact_risk_color(risk):
+    if risk >= 65: return "#ef4656"
+    if risk >= 50: return "#f6a623"
+    if risk >= 35: return "#d99000"
+    return "#19b875"
+
+
+def _compact_interpretation(t, features, risk, slope, simulated=None):
+    rows = anticipated_failures(features, risk)
+    top = rows[0] if rows else None
+    band, emoji = risk_band(risk)
+    ai = ai_decision(features, t["type"], risk, 0.0)
+    parts = [f"{emoji} Niveau {band.lower()} : risque global {risk:.1f} %. "]
+    if top:
+        parts.append(f"Signature dominante : « {top[1]} » ({top[2]:.0f} % du risque global estimé). ")
+    if ai.get("driver"):
+        parts.append(f"Variable la plus sensible localement : {ai['driver']}. ")
+    if simulated:
+        parts.append(f"Scénario actif : {FAILURE_LABELS.get(simulated, simulated)}.")
+    return "".join(parts)
+
+
 def render_manual_mode():
-    """Rendu exclusif de la section 🖐️ Mode manuel."""
-    st.subheader("Mode manuel — paramètres électriques")
-
-    st.caption(
-        "Ce mode permet de modifier les grandeurs électriques et les conditions ambiantes. "
-        "Les scénarios de panne sont réservés exclusivement à la page « Simulation de pannes »."
-    )
-
-    st.markdown("### 🌡️ Conditions ambiantes du mode manuel")
-    mc1, mc2 = st.columns([1.5, 1.0])
-    with mc1:
-        manual_temp = st.slider(
-            "Température ambiante (°C)", 15.0, 50.0,
-            float(st.session_state.manual_temperature), 0.5,
-            key="manual_temperature_slider",
-        )
-        st.session_state.manual_temperature = manual_temp
-        render_temperature_gauge(manual_temp)
-    with mc2:
+    """Poste de pilotage manuel compact : commandes + IA + évolution sur une seule vue."""
+    st.markdown("<div class='compact-head'><div><div class='compact-head-title'>🖐️ POSTE DE PILOTAGE MANUEL</div><div class='compact-head-sub'>Réglage instantané · XGBoost · interprétation locale</div></div><span class='live-dot'></span></div>", unsafe_allow_html=True)
+    top1, top2, top3 = st.columns([1.1, 1.0, 1.0])
+    with top1:
+        tid = st.selectbox("Transformateur", [t["id"] for t in TRANSFORMERS], format_func=lambda x: next(t["nom"] for t in TRANSFORMERS if t["id"] == x), key="manual_selected_transformer")
+    t = next(x for x in TRANSFORMERS if x["id"] == tid)
+    i_nom = nominal_current(t)
+    with top2:
+        scenario_options = ["Fonctionnement normal"] + list(FAILURE_MODES.keys())
+        scenario = st.selectbox("Scénario pédagogique", scenario_options, key="manual_scenario")
+    with top3:
         season_options = list(SEASON_PRESETS.keys())
-        manual_season = st.selectbox(
-            "Type de saison", season_options,
-            index=season_options.index(st.session_state.manual_season),
-            key="manual_season_select",
-        )
+        manual_season = st.selectbox("Saison", season_options, index=season_options.index(st.session_state.manual_season), key="manual_season_select")
         st.session_state.manual_season = manual_season
-        st.info(
-            f"🌦️ **{manual_season}**\n\n"
-            f"Humidité de référence : **{SEASON_PRESETS[manual_season]['humidity']} %**"
-        )
 
-    cols = st.columns(3)
+    preset = FAILURE_MODES.get(scenario, {}).get("effet", {}) if scenario != "Fonctionnement normal" else {}
+    base_charge = float(np.clip(0.80 + preset.get("charge", 0), 0.0, 1.5))
+    base_voltage = float(np.clip(1.00 + preset.get("voltage", 0), 0.90, 1.15))
+    base_oil = float(np.clip(45 + 28 * base_charge + preset.get("oil_temp", 0) * 0.35, 30, 120))
+    base_hum = float(np.clip(SEASON_PRESETS[manual_season]["humidity"] + preset.get("humidity", 0) * 0.5, 5, 100))
+    base_amb = float(np.clip(32 + preset.get("ambient", 0) * 0.5, 15, 50))
 
-    for col, t in zip(cols, TRANSFORMERS):
-        with col:
-            st.markdown(f"### {t['nom']} — {t['type']}")
-            st.caption(f"📍 {t['quartier']}")
+    left, center, right = st.columns([1.12, 1.0, 1.25], gap="small")
+    with left:
+        st.markdown("<div class='control-panel'><div class='control-title'>🎛️ Commandes de simulation</div>", unsafe_allow_html=True)
+        volts = st.slider("Tension BT (V)", 350.0, 460.0, base_voltage * U_NOM, 2.0, key=f"m_v_{tid}")
+        max_amp = float(max(100, round(1.5 * i_nom / 5) * 5))
+        amps = st.slider("Courant de charge (A)", 0.0, max_amp, float(np.clip(base_charge * i_nom / max(base_voltage, .1),0,max_amp)), 5.0, key=f"m_i_{tid}")
+        oil_temp = st.slider("Température huile (°C)", 35.0, 120.0, base_oil, 1.0, key=f"m_oil_{tid}")
+        ambient = st.slider("Température ambiante (°C)", 15.0, 50.0, base_amb, .5, key=f"m_amb_{tid}")
+        humidity = st.slider("Humidité (%)", 5.0, 100.0, base_hum, 1.0, key=f"m_hum_{tid}")
+        imbalance = st.slider("Déséquilibre phases (%)", 0.0, 30.0, 0.0, 1.0, key=f"m_imb_{tid}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            tid = t["id"]
-            tgt = st.session_state.manual_target[tid]
-            kva = RATINGS_KVA.get(t["nom"], 400)
-            i_nom = nominal_current(t)
+    voltage_pu = volts / U_NOM
+    current_ratio = amps / max(i_nom, 1e-6)
+    charge = float(np.clip(voltage_pu * current_ratio, 0.0, 1.5))
+    features = {"charge": charge, "oil_temp": oil_temp, "ambient": ambient, "humidity": humidity, "voltage": voltage_pu, "season_label": manual_season}
+    risk = predict_risk(features, t["type"])
+    if imbalance > 10:
+        risk = float(np.clip(risk + (imbalance - 10) * 0.35, 0, 100))
+    push_history(tid, risk, features)
+    slope, trend_cat = compute_trend(tid)
+    band, emoji = risk_band(risk)
+    update_last_status(tid, risk, slope, trend_cat, band, emoji, source="manuel", failure=None, progress=0.0, features=features)
 
-            volts = st.slider(
-                "Tension BT entre phases (V)", 360.0, 440.0, U_NOM, 2.0,
-                format="%.0f V", key=f"vv_{tid}",
-                on_change=activate_manual, args=(tid,),
-            )
-            i_max = float(round(1.5 * i_nom / 5) * 5)
-            amps = st.slider(
-                "Courant de charge (A)", 0.0, i_max, 0.0, 5.0,
-                format="%.0f A", key=f"ia_{tid}",
-                on_change=activate_manual, args=(tid,),
-            )
+    with center:
+        color = _compact_risk_color(risk)
+        rows = anticipated_failures(features, risk)
+        top = rows[0] if rows else None
+        panne = top[1] if top else "Aucune"
+        pct = top[2] if top else 0
+        st.markdown(f"<div class='ai-panel'><div class='ai-small'>🤖 RISQUE IA — {t['nom']}</div><div class='ai-big' style='color:{color}'>{risk:.0f}%</div><div class='ai-badge'>{emoji} {band}</div><div class='ai-line'></div><div class='ai-small'>PANNE À ANTICIPER</div><div style='font-size:18px;font-weight:850;margin-top:3px'>{panne}</div><div style='font-size:12px;color:#a9cce0'>Part estimée : {pct:.0f}% · tendance {slope:+.2f} pt/min</div></div>", unsafe_allow_html=True)
+        for _, label, p in rows[:3]:
+            st.progress(min(1, p / 100), text=f"{label.capitalize()} · {p:.0f}%")
 
-            # Conversion en grandeurs relatives (p.u.) pour le modèle :
-            # charge = P / S_n = (U / U_n) × (I / I_n)
-            tgt["voltage"] = volts / U_NOM
-            tgt["current_ratio"] = amps / i_nom
-            tgt["charge"] = tgt["voltage"] * tgt["current_ratio"]
+    with right:
+        st.markdown("<div class='control-panel'><div class='control-title'>🧠 Interprétation instantanée</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='interpret-box'>{_compact_interpretation(t, features, risk, slope)}</div>", unsafe_allow_html=True)
+        ai = ai_decision(features, t["type"], risk)
+        if ai.get("driver"):
+            st.markdown(f"**Variable dominante :** {ai['driver']} ({ai['effect']:+.1f} pt)")
+        if ai.get("action") and risk >= 35:
+            st.markdown(f"**Action :** {ai['action']}")
+        if top and risk >= 35:
+            name = top[0]
+            action = NETWORK_ACTIONS_BY_FAILURE.get(name, ["Surveiller l'évolution de la grandeur concernée."])[0]
+            st.markdown(f"**Panne associée :** {FAILURE_LABELS.get(name,name)}")
+            st.caption(action)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            # Avant toute manipulation : aucun calcul, tout reste à zéro.
-            if not st.session_state.manual_active[tid]:
-                st.session_state.manual_effective[tid].update(tgt)
-                st.caption(f"Nominal : {kva} kVA · {i_nom:.0f} A · charge 0 %")
-                st.metric("Panne anticipée", "Aucune")
-                st.info(
-                    "🟢 En attente — réglez la tension ou le courant "
-                    "pour lancer le calcul du risque."
-                )
-                continue
+    vals = [
+        ("Tension", f"{volts:.0f} V"), ("Courant", f"{amps:.0f} A"),
+        ("Charge calculée", f"{charge*100:.0f} %"), ("Huile", f"{oil_temp:.0f} °C"),
+        ("Humidité", f"{humidity:.0f} %"), ("Déséquilibre", f"{imbalance:.0f} %")]
+    st.markdown("<div class='sim-strip'>" + "".join(f"<div class='sim-cell'><div class='sim-label'>{a}</div><div class='sim-val'>{b}</div></div>" for a,b in vals) + "</div>", unsafe_allow_html=True)
 
-            animate_towards_target(tid)
-            eff = st.session_state.manual_effective[tid]
+    hist = list(st.session_state.manual_history.get(tid, []))
+    if len(hist) >= 2:
+        dfh = pd.DataFrame(hist).tail(35)
+        fig = px.line(dfh, x="t", y="risk", markers=True)
+        fig.update_layout(height=180, margin=dict(l=5,r=5,t=8,b=5), yaxis=dict(range=[0,100], title="Risque (%)"), xaxis_title=None, showlegend=False)
+        fig.add_hline(y=50, line_dash="dash", line_color="orange")
+        fig.add_hline(y=65, line_dash="dash", line_color="red")
+        st.plotly_chart(fig, use_container_width=True, key=f"manual_compact_chart_{tid}")
+    else:
+        st.caption("Déplacez un curseur : la courbe du risque se construit automatiquement ici.")
 
-            st.caption(
-                f"Nominal : {kva} kVA · {i_nom:.0f} A · "
-                f"tension phase-neutre {volts / math.sqrt(3):.0f} V · "
-                f"charge {tgt['charge'] * 100:.0f} % — {load_zone(eff['charge'])}"
-            )
 
-            oil_temp = 45 + eff["charge"] * 28 + max(0, manual_temp - 30) * 0.6
-
-            features = {
-                "charge": eff["charge"],
-                "oil_temp": oil_temp,
-                "ambient": manual_temp,
-                "humidity": float(SEASON_PRESETS[manual_season]["humidity"]),
-                "voltage": eff["voltage"],
-                "season_label": manual_season,
-            }
-
-            risk = predict_risk(features, t["type"])
-
-            push_history(t["id"], risk, features)
-            slope, trend_cat = compute_trend(t["id"])
-            band_label, emoji = risk_band(risk)
-
-            update_last_status(
-                t["id"], risk, slope, trend_cat, band_label, emoji,
-                source="manuel", failure=None, progress=0.0, features=features,
-            )
-
-            render_failure_forecast(features, risk, slope)
-
-            priority, priority_score = transformer_priority(t, risk)
-            st.caption(f"Priorité indicative : **{priority}** ({priority_score:.1f}/100)")
-
-            with st.expander("🧠 Pourquoi le risque évolue ?"):
-                explain_df = local_risk_sensitivity(features, t["type"])
-                st.caption(
-                    f"Source : {explain_df.attrs.get('source', 'analyse locale')}. "
-                    "Il s'agit d'une sensibilité locale, pas d'une causalité."
-                )
-                st.dataframe(explain_df, use_container_width=True, hide_index=True)
-
-            if risk >= 65:
-                st.error(f"🚨 **Risque élevé — {risk:.1f} %**")
-            elif risk >= 50:
-                st.warning(f"⚠️ **INTERPELLATION — {risk:.1f} %**")
-            elif risk >= 35:
-                st.warning(f"🟠 **Risque modéré — {risk:.1f} %**")
-            else:
-                st.success(f"🟢 **Risque faible — {risk:.1f} %**")
-
-            render_ai_card(t, features, risk, "manuel")
 
 
 # ============================================================================
@@ -1745,338 +1742,121 @@ def render_manual_mode():
 # ============================================================================
 
 def render_simulation_mode():
-    """Rendu exclusif de la section 🎲 Simulation de pannes."""
-    st.subheader("Simulation — évolution progressive vers la panne")
+    """Laboratoire de panne compact : tout le diagnostic principal tient dans une seule vue."""
+    st.markdown("<div class='compact-head'><div><div class='compact-head-title'>🎲 LABORATOIRE DE SIMULATION DE PANNES</div><div class='compact-head-sub'>Scénario → dégradation physique → XGBoost → interprétation</div></div><span class='live-dot'></span></div>", unsafe_allow_html=True)
+    c1,c2,c3,c4=st.columns([1.0,1.35,1.0,1.0])
+    with c1:
+        tid=st.selectbox("Transformateur",[t["id"] for t in TRANSFORMERS],format_func=lambda x:next(t["nom"] for t in TRANSFORMERS if t["id"]==x),key="sim_selected_transformer")
+    t=next(x for x in TRANSFORMERS if x["id"]==tid)
+    options=["Aucune (fonctionnement normal)"]+list(FAILURE_MODES.keys())
+    current=st.session_state.sim_failure.get(tid) or options[0]
+    with c2:
+        choice=st.selectbox("Scénario de panne",options,index=options.index(current) if current in options else 0,key=f"sim_choice_compact_{tid}")
+    with c3:
+        sim_temp=st.slider("Température ambiante",15.0,50.0,float(st.session_state.simulation_temperature),.5,key="sim_temp_compact")
+        st.session_state.simulation_temperature=sim_temp
+    with c4:
+        seasons=list(SEASON_PRESETS.keys())
+        sim_season=st.selectbox("Saison",seasons,index=seasons.index(st.session_state.simulation_season),key="sim_season_compact")
+        st.session_state.simulation_season=sim_season
 
-    st.info(
-        "🧠 **Moteur de risque : XGBoost**. La panne simulée fait évoluer "
-        "progressivement les grandeurs physiques (charge, température, tension, "
-        "humidité), puis XGBoost recalcule le risque à chaque rafraîchissement. "
-        "Les données de simulation restent isolées des autres pages."
-    )
-    st.caption(
-        "Lorsqu'une panne est sélectionnée, le risque commence près de 0 % "
-        "puis augmente progressivement. À 50 %, une vigilance est déclenchée ; "
-        "à 65 %, le niveau devient élevé. Tant qu'aucune panne n'est sélectionnée, "
-        "rien n'est simulé et le risque reste à 0 %."
-    )
+    previous=st.session_state.sim_failure.get(tid) or options[0]
+    if choice!=previous:
+        if choice==options[0]:
+            st.session_state.sim_failure[tid]=None; st.session_state.sim_start_time[tid]=None
+        else:
+            st.session_state.sim_failure[tid]=choice; st.session_state.sim_start_time[tid]=time.time()
+        st.session_state.simulation_history[tid].clear()
+        update_simulation_status(tid,0.0,0.0,"stable","Faible","🟢",source="simulation",failure=None if choice==options[0] else choice,progress=0.0,features={})
+        st.rerun()
 
-    # ------------------------------------------------------------------------
-    # MÉTÉO SIMULÉE
-    # ------------------------------------------------------------------------
+    active=st.session_state.sim_failure.get(tid)
+    climate=TYPE_CLIMATE.get(t["type"],{"ambient_factor":1.0,"humidity_factor":1.0,"orage_voltage_bonus":0.0})
+    weather_name=st.selectbox("Météo",list(WEATHER_PRESETS.keys()),key="sim_weather_compact")
+    weather=WEATHER_PRESETS[weather_name]
+    oil_add=max(0.0,sim_temp-30)*0.6*climate["ambient_factor"]
+    hum=float(np.clip(SEASON_PRESETS[sim_season]["humidity"]+weather["humidity_bonus"]*climate["humidity_factor"],5,100))
+    vadd=climate["orage_voltage_bonus"] if weather["orage"] else 0.0
+    base={"charge":0.8,"oil_temp":45+0.8*28+oil_add,"voltage":1.0+vadd}
 
-    st.markdown("#### 🌦️ Conditions climatiques simulées")
+    if active:
+        start=st.session_state.sim_start_time.get(tid) or time.time(); st.session_state.sim_start_time[tid]=start
+        elapsed=max(0.0,time.time()-start)
+        tau=FAILURE_TIME_CONSTANT*TYPE_TIME_FACTOR.get(t["type"],1.0)
+        progress=1-math.exp(-elapsed/tau)
+        effect=FAILURE_MODES[active]["effet"]
+        charge=base["charge"]+effect.get("charge",0)*progress
+        oil=base["oil_temp"]+effect.get("oil_temp",0)*progress
+        voltage=base["voltage"]+effect.get("voltage",0)*progress
+        humidity=hum+effect.get("humidity",0)*progress
+        ambient=sim_temp+effect.get("ambient",0)*progress
+    else:
+        progress=0.0; charge=base["charge"]; oil=base["oil_temp"]; voltage=base["voltage"]; humidity=hum; ambient=sim_temp
 
-    wc1, wc2, wc3 = st.columns([1.15, 1.0, 1.0])
+    features={"charge":charge,"oil_temp":oil,"ambient":ambient,"humidity":humidity,"voltage":voltage,"season_label":sim_season}
+    risk=predict_risk(features,t["type"])
+    climate_bonus=0.0
+    if sim_temp>35: climate_bonus+=(sim_temp-35)*0.7*climate["ambient_factor"]
+    if humidity>75: climate_bonus+=(humidity-75)*0.10*climate["humidity_factor"]
+    if weather["orage"]: climate_bonus+=5.0*climate["ambient_factor"]
+    ref={"charge":base["charge"],"oil_temp":base["oil_temp"],"ambient":sim_temp,"humidity":hum,"voltage":base["voltage"],"season_label":sim_season}
+    if SIM_RELATIVE_RISK: climate_bonus-=predict_risk(ref,t["type"])*(1-progress)
+    risk=float(np.clip(risk+climate_bonus,0,100)) if active else 0.0
 
-    with wc1:
-        sim_temp = st.slider(
-            "Température ambiante simulée (°C)", 15.0, 50.0,
-            float(st.session_state.simulation_temperature), 0.5,
-            key="sim_temp_slider",
-        )
-        st.session_state.simulation_temperature = sim_temp
-        render_temperature_gauge(sim_temp, "Température simulée")
+    push_simulation_history(tid,risk,features)
+    slope,trend=compute_simulation_trend(tid)
+    band,emoji=risk_band(risk)
+    update_simulation_status(tid,risk,slope,trend,band,emoji,source="simulation",failure=active,progress=progress,features=features)
+    st.session_state.simulation_status[tid]["reference"]=ref
 
-    with wc2:
-        season_options = list(SEASON_PRESETS.keys())
-        sim_season = st.selectbox(
-            "Type de saison simulé", season_options,
-            index=season_options.index(st.session_state.simulation_season),
-            key="sim_season_select",
-        )
-        st.session_state.simulation_season = sim_season
-        st.info(
-            f"🌦️ **{sim_season}**\n\n"
-            f"Humidité de référence : **{SEASON_PRESETS[sim_season]['humidity']} %**"
-        )
+    left,center,right=st.columns([1.05,1.0,1.3],gap="small")
+    with left:
+        st.markdown("<div class='control-panel'><div class='control-title'>📡 Grandeurs simulées</div>",unsafe_allow_html=True)
+        vals=[("Tension",f"{voltage*U_NOM:.0f} V"),("Courant",f"{charge/max(voltage,.5)*nominal_current(t):.0f} A"),("Charge",f"{charge*100:.0f} %"),("Huile",f"{oil:.1f} °C"),("Ambiante",f"{ambient:.1f} °C"),("Humidité",f"{humidity:.0f} %")]
+        for a,b in vals: st.markdown(f"**{a}** <span style='float:right;font-weight:850'>{b}</span>",unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
+        st.progress(min(1,progress),text=f"Dégradation : {progress*100:.0f}%")
+        if active:
+            phase_label,phase_kind,phase_text=failure_phase(progress)
+            getattr(st,phase_kind)(f"{phase_label} — {phase_text}")
+        else: st.success("🟢 Fonctionnement normal — aucune panne active")
 
-    with wc3:
-        sim_weather_label = st.selectbox(
-            "Conditions météo simulées",
-            list(WEATHER_PRESETS.keys()),
-            key="sim_weather_select",
-        )
+    with center:
+        rows=anticipated_failures(features,risk) if active else []
+        top=rows[0] if rows else None
+        color=_compact_risk_color(risk)
+        panne=top[1] if top else (FAILURE_LABELS.get(active,active) if active else "Aucune")
+        pct=top[2] if top else 0
+        st.markdown(f"<div class='ai-panel'><div class='ai-small'>🤖 DIAGNOSTIC IA — {t['nom']}</div><div class='ai-big' style='color:{color}'>{risk:.0f}%</div><div class='ai-badge'>{emoji} {band}</div><div class='ai-line'></div><div class='ai-small'>ANTICIPATION</div><div style='font-size:18px;font-weight:850'>{panne}</div><div style='font-size:12px;color:#a9cce0'>Signature estimée : {pct:.0f}% · tendance {slope:+.2f} pt/min</div></div>",unsafe_allow_html=True)
+        for _,label,p in rows[:3]: st.progress(min(1,p/100),text=f"{label.capitalize()} · {p:.0f}%")
 
-    weather = WEATHER_PRESETS[sim_weather_label]
+    with right:
+        st.markdown("<div class='control-panel'><div class='control-title'>🧠 Interprétation + conduite</div>",unsafe_allow_html=True)
+        if active:
+            st.markdown(f"<div class='interpret-box'>{_compact_interpretation(t,features,risk,slope,active)}</div>",unsafe_allow_html=True)
+            ai=ai_decision(features,t["type"],risk,climate_bonus,ref)
+            if ai.get("driver"): st.markdown(f"**Facteur dominant :** {ai['driver']} ({ai['effect']:+.1f} pt)")
+            if ai.get("failure"): st.markdown(f"**Panne anticipée :** {ai['failure'][1]} ≈ {ai['failure'][2]:.0f}%")
+            for action in NETWORK_ACTIONS_BY_FAILURE.get(active,[])[:2]: st.markdown(f"• {action}")
+            for directive in FAILURE_MODES[active]["directives"][:1]: st.caption(f"🩺 {directive}")
+        else:
+            st.markdown("<div class='interpret-box'>Sélectionnez un scénario pour voir la dégradation, la montée du risque et l'interprétation IA en temps réel.</div>",unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
 
-    st.caption(
-        "La température et les conditions choisies influencent la simulation "
-        "selon le type de transformateur."
-    )
+    hist=list(st.session_state.simulation_history[tid])
+    if len(hist)>=2:
+        dfh=pd.DataFrame(hist).tail(45)
+        fig=px.line(dfh,x="t",y="risk",markers=True)
+        fig.update_layout(height=185,margin=dict(l=5,r=5,t=8,b=5),yaxis=dict(range=[0,100],title="Risque (%)"),xaxis_title=None,showlegend=False)
+        fig.add_hline(y=50,line_dash="dash",line_color="orange")
+        fig.add_hline(y=65,line_dash="dash",line_color="red")
+        st.plotly_chart(fig,use_container_width=True,key=f"sim_compact_chart_{tid}")
+    else:
+        st.caption("La courbe du risque apparaît dès les premiers rafraîchissements de la simulation.")
 
-    # ------------------------------------------------------------------------
-    # TRANSFORMATEURS
-    # ------------------------------------------------------------------------
+    vals=[("Tension",f"{voltage*U_NOM:.0f} V"),("Courant",f"{charge/max(voltage,.5)*nominal_current(t):.0f} A"),("Charge",f"{charge*100:.0f}%"),("Huile",f"{oil:.0f}°C"),("Humidité",f"{humidity:.0f}%"),("Phase",f"{progress*100:.0f}%")]
+    st.markdown("<div class='sim-strip'>"+"".join(f"<div class='sim-cell'><div class='sim-label'>{a}</div><div class='sim-val'>{b}</div></div>" for a,b in vals)+"</div>",unsafe_allow_html=True)
 
-    cols = st.columns(3)
-
-    for col, t in zip(cols, TRANSFORMERS):
-        with col:
-            st.markdown(f"### {t['nom']} — {t['type']}")
-            st.caption(f"📍 {t['quartier']}")
-
-            options = ["Aucune (fonctionnement normal)"] + list(FAILURE_MODES.keys())
-
-            current_choice = st.session_state.sim_failure.get(t["id"]) or options[0]
-
-            choice = st.selectbox(
-                "Mode de panne simulé",
-                options,
-                index=options.index(current_choice) if current_choice in options else 0,
-                key=f"fail_{t['id']}",
-            )
-
-            previous_choice = st.session_state.sim_failure.get(t["id"]) or options[0]
-
-            # Nouvelle sélection
-            if choice != previous_choice:
-                if choice == options[0]:
-                    st.session_state.sim_failure[t["id"]] = None
-                    st.session_state.sim_start_time[t["id"]] = None
-                    new_failure = None
-                else:
-                    st.session_state.sim_failure[t["id"]] = choice
-                    st.session_state.sim_start_time[t["id"]] = time.time()
-                    new_failure = choice
-
-                # Retour à un état initial proche de 0 %
-                update_simulation_status(
-                    t["id"], 2.0, 0.0, "stable", "Faible", "🟢",
-                    source="simulation", failure=new_failure,
-                    progress=0.0, features={},
-                )
-                st.session_state.simulation_history[t["id"]].clear()
-
-            active_failure = st.session_state.sim_failure.get(t["id"])
-
-            # Aucune panne sélectionnée : rien n'est simulé, tout reste à zéro.
-            if not active_failure:
-                st.session_state.simulation_history[t["id"]].clear()
-                update_simulation_status(
-                    t["id"], 0.0, 0.0, "stable", "Faible", "🟢",
-                    source="simulation", failure=None,
-                    progress=0.0, features={},
-                )
-                st.metric("Panne anticipée", "Aucune")
-                st.success(
-                    "🟢 Aucune panne sélectionnée — choisissez un mode de "
-                    "panne pour lancer la simulation."
-                )
-                continue
-
-            climate = TYPE_CLIMATE.get(
-                t["type"],
-                {"ambient_factor": 1.0, "humidity_factor": 1.0, "orage_voltage_bonus": 0.0},
-            )
-
-            # ----------------------------------------------------------------
-            # IMPACT DU CLIMAT
-            # ----------------------------------------------------------------
-
-            oil_temp_climate_add = max(0.0, sim_temp - 30) * 0.6 * climate["ambient_factor"]
-
-            humidity_climate = float(np.clip(
-                SEASON_PRESETS[sim_season]["humidity"]
-                + weather["humidity_bonus"] * climate["humidity_factor"],
-                5, 100,
-            ))
-
-            voltage_climate_add = climate["orage_voltage_bonus"] if weather["orage"] else 0.0
-
-            base = {
-                "charge": 0.8,
-                "oil_temp": 45 + 0.8 * 28 + oil_temp_climate_add,
-                "voltage": 1.0 + voltage_climate_add,
-            }
-
-            # ----------------------------------------------------------------
-            # PROGRESSION
-            # ----------------------------------------------------------------
-
-            if active_failure:
-                start = st.session_state.sim_start_time.get(t["id"])
-
-                if start is None:
-                    start = time.time()
-                    st.session_state.sim_start_time[t["id"]] = start
-
-                elapsed = max(0.0, time.time() - start)
-                effective_time_constant = FAILURE_TIME_CONSTANT * TYPE_TIME_FACTOR.get(t["type"], 1.0)
-                progress = 1 - math.exp(-elapsed / effective_time_constant)
-
-                effet = FAILURE_MODES[active_failure]["effet"]
-
-                charge = base["charge"] + effet.get("charge", 0) * progress
-                oil_temp = base["oil_temp"] + effet.get("oil_temp", 0) * progress
-                voltage = base["voltage"] + effet.get("voltage", 0) * progress
-                humidity_adj = humidity_climate + effet.get("humidity", 0) * progress
-                ambient_adj = sim_temp + effet.get("ambient", 0) * progress
-            else:
-                progress = 0.0
-                charge = base["charge"]
-                oil_temp = base["oil_temp"]
-                voltage = base["voltage"]
-                humidity_adj = humidity_climate
-                ambient_adj = sim_temp
-
-            # ----------------------------------------------------------------
-            # GRANDEURS
-            # ----------------------------------------------------------------
-
-            features = {
-                "charge": charge,
-                "oil_temp": oil_temp,
-                "ambient": ambient_adj,
-                "humidity": humidity_adj,
-                "voltage": voltage,
-                "season_label": sim_season,
-            }
-
-            # ----------------------------------------------------------------
-            # CALCUL DU RISQUE — XGBOOST (même moteur que le mode manuel)
-            # ----------------------------------------------------------------
-
-            risk = predict_risk(features, t["type"])
-
-            # Bonus climatique conservé comme facteur de contexte.
-            climate_bonus = 0.0
-            if sim_temp > 35:
-                climate_bonus += (sim_temp - 35) * 0.7 * climate["ambient_factor"]
-            if humidity_adj > 75:
-                climate_bonus += (humidity_adj - 75) * 0.10 * climate["humidity_factor"]
-            if weather["orage"]:
-                climate_bonus += 5.0 * climate["ambient_factor"]
-
-            # Référence saine : même climat, sans panne.
-            features0 = {
-                "charge": base["charge"],
-                "oil_temp": base["oil_temp"],
-                "ambient": sim_temp,
-                "humidity": humidity_climate,
-                "voltage": base["voltage"],
-                "season_label": sim_season,
-            }
-            if SIM_RELATIVE_RISK:
-                # Le poids de la référence diminue à mesure que la panne
-                # progresse : risque = 0 % au départ, risque du modèle en fin
-                # de progression.
-                climate_bonus -= predict_risk(features0, t["type"]) * (1 - progress)
-
-            risk = float(np.clip(risk + climate_bonus, 0, 100))
-
-            # ----------------------------------------------------------------
-            # HISTORIQUE ET ÉTAT (isolés de la supervision)
-            # ----------------------------------------------------------------
-
-            push_simulation_history(t["id"], risk, features)
-            slope, trend_cat = compute_simulation_trend(t["id"])
-            band_label, emoji = risk_band(risk)
-
-            update_simulation_status(
-                t["id"], risk, slope, trend_cat, band_label, emoji,
-                source="simulation", failure=active_failure,
-                progress=progress, features=features,
-            )
-            st.session_state.simulation_status[t["id"]]["reference"] = features0
-
-            # ----------------------------------------------------------------
-            # AFFICHAGE RISQUE
-            # ----------------------------------------------------------------
-
-            render_failure_forecast(features, risk, slope, features0, active_failure)
-
-            if risk >= 65:
-                st.error(f"🚨 **ALERTE CRITIQUE — {risk:.1f} %** : le niveau de risque est élevé.")
-            elif risk >= 50:
-                st.warning(
-                    f"⚠️ **INTERPELLATION — {risk:.1f} %** : "
-                    f"le risque vient de franchir le seuil de 50 %."
-                )
-            elif risk >= 35:
-                st.warning(f"🟠 **Vigilance — {risk:.1f} %** : la dérive devient significative.")
-            else:
-                st.success(f"🟢 **Risque faible — {risk:.1f} %**")
-
-            render_ai_card(t, features, risk, "sim", climate_bonus, features0)
-
-            st.caption(
-                f"🌡️ T° huile estimée : {oil_temp:.1f} °C · "
-                f"⚡ {voltage * U_NOM:.0f} V · "
-                f"{charge / max(voltage, 0.5) * nominal_current(t):.0f} A · "
-                f"💧 Humidité perçue : {humidity_adj:.0f} %"
-                + (" · ⚡ orage actif" if weather["orage"] else "")
-            )
-
-            # ----------------------------------------------------------------
-            # PROGRESSION DE PANNE
-            # ----------------------------------------------------------------
-
-            if active_failure:
-                st.progress(
-                    min(1.0, progress),
-                    text=f"Progression de la panne : {progress * 100:.0f} %",
-                )
-
-                phase_label, phase_kind, phase_text = failure_phase(progress)
-                getattr(st, phase_kind)(f"{phase_label} — {phase_text}")
-
-                st.markdown("**Pronostic :** " + prognosis_text(risk, slope, active_failure))
-
-                st.markdown("**Conduite à tenir associée au scénario (règles métier) :**")
-                for action in NETWORK_ACTIONS_BY_FAILURE.get(active_failure, []):
-                    st.markdown(f"- {action}")
-                st.markdown("- " + NETWORK_ACTIONS_BY_TYPE.get(t["type"], ""))
-
-                with st.expander("🩺 Diagnostic et directives correctives ciblées"):
-                    for directive in FAILURE_MODES[active_failure]["directives"]:
-                        st.markdown(f"- {directive}")
-            else:
-                st.success("🟢 Fonctionnement normal")
-
-            # ----------------------------------------------------------------
-            # GRAPHIQUE
-            # ----------------------------------------------------------------
-
-            hist = list(st.session_state.simulation_history[t["id"]])
-
-            if len(hist) >= 2:
-                dfh = pd.DataFrame(hist)
-
-                fig = px.line(dfh, x="t", y="risk", title="Historique du risque")
-                fig.add_hline(
-                    y=50, line_dash="dash", line_color="orange",
-                    annotation_text="Interpellation 50 %",
-                )
-                fig.add_hline(
-                    y=65, line_dash="dash", line_color="red",
-                    annotation_text="Risque élevé 65 %",
-                )
-                fig.update_layout(
-                    height=200,
-                    margin=dict(l=10, r=10, t=40, b=10),
-                    showlegend=False,
-                    yaxis=dict(range=[0, 100]),
-                )
-                st.plotly_chart(fig, use_container_width=True, key=f"simhist_{t['id']}")
-
-    # ------------------------------------------------------------------------
-    # RAPPORT COMPLET — uniquement dans le contexte simulation
-    # ------------------------------------------------------------------------
-    st.markdown("### 📄 Rapport complet et conduite à tenir")
-    st.markdown(
-        '<div class="report-box">Ce rapport est calculé à partir des scénarios de panne actuellement '
-        'sélectionnés. Il ne mélange pas les données du mode manuel avec la simulation.</div>',
-        unsafe_allow_html=True,
-    )
-    st.download_button(
-        "⬇️ Générer le rapport complet de cette simulation",
-        data=build_intervention_report(),
-        file_name=f"rapport_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-        mime="text/plain",
-        use_container_width=True,
-        key="simulation_report_download",
-    )
 
 
 # ============================================================================
