@@ -17,12 +17,12 @@ import streamlit as st
 # ============================================================================
 
 st.set_page_config(
-    page_title="IA Réseau Pro — Parc SONABEL v1.7",
+    page_title="IA Réseau Pro — Supervision intelligente",
     page_icon="⚡",
     layout="wide",
 )
 
-APP_VERSION = "1.7 — anticipation du type de panne"
+APP_VERSION = "2.0 — supervision intelligente & anticipation des pannes"
 
 # ============================================================================
 # INTERFACE DESKTOP — IA RÉSEAU PRO
@@ -56,7 +56,42 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 { color:
 .page-header { background:linear-gradient(90deg,#0a448d,#18a8d8); color:white; border-radius:14px; padding:15px 20px; margin-bottom:18px; box-shadow:0 5px 16px rgba(10,68,141,.18); }
 .page-header h2 { margin:0; color:white; }
 .page-header p { margin:4px 0 0; opacity:.88; }
-.page-runtime-marker{display:none;}
+ .page-runtime-marker{display:none;}
+/* IA RESEAU PRO 2.0 */
+:root{--tech-navy:#061a33;--tech-blue:#0877d1;--tech-cyan:#15c5e8;--tech-green:#19b875;--tech-orange:#f6a623;--tech-red:#ef4656;}
+html,body,.stApp{scroll-behavior:smooth;}
+.stApp{background:radial-gradient(circle at 15% 10%,rgba(21,197,232,.10),transparent 26%),radial-gradient(circle at 85% 18%,rgba(8,119,209,.10),transparent 28%),linear-gradient(135deg,#edf4fa 0%,#f8fbfe 48%,#e7f0f8 100%);}
+.block-container{max-width:1580px;padding-left:28px;padding-right:28px;}
+.desktop-titlebar{height:66px;background:linear-gradient(105deg,#03152c 0%,#07386c 45%,#0877b8 100%);box-shadow:0 8px 28px rgba(3,35,68,.32);overflow:hidden;}
+.desktop-titlebar:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);transform:translateX(-100%);animation:techSweep 5s linear infinite;}
+.desktop-brand{font-size:23px;text-shadow:0 0 18px rgba(21,197,232,.35);}
+.app-section,.toolbar,div[data-testid="stMetric"],.report-box{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}
+.app-section{background:rgba(255,255,255,.78);border-color:rgba(148,177,204,.48);box-shadow:0 12px 35px rgba(12,50,83,.07);}
+.page-header{position:relative;overflow:hidden;background:linear-gradient(110deg,#061e3e,#075fa8 58%,#10a8d5);box-shadow:0 12px 30px rgba(4,67,122,.20);}
+.page-header:before{content:"";position:absolute;width:220px;height:220px;right:-55px;top:-115px;border:1px solid rgba(255,255,255,.20);border-radius:50%;box-shadow:0 0 0 22px rgba(255,255,255,.035),0 0 0 44px rgba(255,255,255,.025);}
+.section-banner{background:linear-gradient(100deg,#061f40,#0878bd,#14b7d8);}
+.stButton>button,.stDownloadButton>button{border:1px solid #b9cede;background:linear-gradient(180deg,#ffffff,#edf5fb);color:#0a3159;box-shadow:0 4px 12px rgba(7,48,83,.08);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
+.stButton>button:hover,.stDownloadButton>button:hover{transform:translateY(-2px);border-color:#1a91cb;box-shadow:0 8px 20px rgba(8,119,209,.16);}
+div[data-testid="stMetric"]{min-height:112px;position:relative;overflow:hidden;}
+div[data-testid="stMetric"]:after{content:"";position:absolute;right:-25px;bottom:-35px;width:95px;height:95px;border:1px solid rgba(8,119,209,.10);border-radius:50%;box-shadow:0 0 0 16px rgba(8,119,209,.035);}
+.tech-panel{background:linear-gradient(145deg,rgba(4,26,50,.97),rgba(7,65,105,.96));color:#eaf7ff;border:1px solid rgba(63,190,232,.25);border-radius:16px;padding:18px;box-shadow:0 12px 32px rgba(3,28,52,.20);position:relative;overflow:hidden;}
+.tech-panel:after{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,#15c5e8,#7be9ff,transparent);animation:techPulse 2.4s ease-in-out infinite;}
+.tech-kicker{font-size:10px;letter-spacing:1.6px;color:#79d9f5;font-weight:800;text-transform:uppercase;}
+.tech-value{font-size:28px;font-weight:850;line-height:1.1;margin-top:5px;}
+.tech-muted{font-size:11px;color:#a9c8dc;}
+.tech-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-size:10px;font-weight:750;margin:3px 4px 0 0;}
+.fleet-card{border:1px solid #cfdeea;border-radius:15px;padding:14px 15px;background:linear-gradient(145deg,#fff,#f2f7fb);box-shadow:0 8px 24px rgba(15,55,87,.07);transition:transform .2s ease,box-shadow .2s ease;}
+.fleet-card:hover{transform:translateY(-3px);box-shadow:0 13px 30px rgba(15,55,87,.13);}
+.fleet-name{font-weight:850;font-size:17px;color:#082b50;}
+.fleet-risk{font-size:30px;font-weight:900;margin:5px 0;}
+.fleet-line{height:6px;border-radius:99px;background:#dfe9f1;overflow:hidden;margin:7px 0;}
+.fleet-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#18b87b,#f6a623,#ef4656);}
+.live-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#18c77e;box-shadow:0 0 0 5px rgba(24,199,126,.12),0 0 14px rgba(24,199,126,.75);animation:liveBlink 1.5s ease-in-out infinite;}
+.statusbar{height:32px;background:linear-gradient(90deg,#021326,#062b4e,#021326);}
+@keyframes techSweep{0%{transform:translateX(-100%)}55%,100%{transform:translateX(100%)}}
+@keyframes techPulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.35}}
+@media(max-width:900px){.desktop-subtitle{display:none}.block-container{padding-left:12px;padding-right:12px}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1381,6 +1416,58 @@ st.markdown(
 
 
 # ============================================================================
+# HABILLAGE 2.0 — EN-TÊTE DE SUPERVISION
+# ============================================================================
+
+def render_command_header(active):
+    """En-tête dynamique commun aux pages de l'application."""
+    now = datetime.now().strftime("%d/%m/%Y · %H:%M:%S")
+    active_count = sum(1 for t in TRANSFORMERS if st.session_state.last_status[t["id"]]["risk"] >= 50)
+    critical_count = sum(1 for t in TRANSFORMERS if st.session_state.last_status[t["id"]]["risk"] >= 65)
+    clean = active.replace("🏠 ","").replace("🖐️ ","").replace("🎲 ","").replace("📋 ","").replace("📈 ","").replace("🌦️ ","").replace("🗺️ ","")
+    html = f'''
+    <div class="tech-panel" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;">
+        <div>
+          <div class="tech-kicker">CENTRE DE SUPERVISION · RÉSEAU DE DISTRIBUTION</div>
+          <div class="tech-value">{clean}</div>
+          <div class="tech-muted">IA RÉSEAU PRO 2.0 · moteur de risque et anticipation des signatures de panne</div>
+        </div>
+        <div style="text-align:right;min-width:250px;">
+          <div><span class="live-dot"></span> <b>SUPERVISION ACTIVE</b></div>
+          <div class="tech-muted" style="margin-top:5px;">{now} · {len(TRANSFORMERS)} transformateurs</div>
+          <div style="margin-top:7px;">
+            <span class="tech-chip">⚠ Surveillance : {active_count}</span>
+            <span class="tech-chip">🔴 Critiques : {critical_count}</span>
+          </div>
+        </div>
+      </div>
+    </div>'''
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_fleet_cards():
+    """Cartes compactes du parc pour une lecture instantanée."""
+    cols = st.columns(len(TRANSFORMERS))
+    for col, t in zip(cols, TRANSFORMERS):
+        status = st.session_state.last_status[t["id"]]
+        risk = float(status.get("risk", 0.0))
+        emoji = status.get("emoji", "🟢")
+        label = status.get("status", "Faible")
+        failure = status.get("failure") or "Aucune panne dominante"
+        with col:
+            html = f'''
+            <div class="fleet-card">
+              <div class="fleet-name">{emoji} {t["nom"]} <span style="font-size:11px;color:#6d8499;">· {t["quartier"]}</span></div>
+              <div class="fleet-risk">{risk:.0f}<span style="font-size:15px;"> %</span></div>
+              <div style="font-size:11px;font-weight:800;color:#46627c;">{label}</div>
+              <div class="fleet-line"><div class="fleet-fill" style="width:{max(0,min(100,risk))}%;"></div></div>
+              <div style="font-size:11px;color:#61798e;margin-top:8px;">IA : <b>{failure}</b></div>
+            </div>'''
+            st.markdown(html, unsafe_allow_html=True)
+
+
+# ============================================================================
 # SECTION 0 — TABLEAU DE BORD
 # ============================================================================
 
@@ -1392,6 +1479,9 @@ def render_dashboard():
         "La priorité est indicative et doit être calibrée avec les données "
         "réelles, la criticité des départs et les procédures d'exploitation."
     )
+
+    render_fleet_cards()
+    st.markdown("### 📡 État instantané du parc")
 
     rows = []
     for t in TRANSFORMERS:
@@ -2232,6 +2322,7 @@ def render_active_page():
         f'<div class="page-runtime-marker">PAGE ACTIVE : {active}</div>',
         unsafe_allow_html=True,
     )
+    render_command_header(active)
     renderer()
 
 
@@ -2256,7 +2347,7 @@ live_page()
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.7 — ANTICIPATION DES PANNES</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v2.0 — SUPERVISION INTELLIGENTE</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
