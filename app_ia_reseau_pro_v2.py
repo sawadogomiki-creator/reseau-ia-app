@@ -17,12 +17,12 @@ import streamlit as st
 # ============================================================================
 
 st.set_page_config(
-    page_title="IA Réseau Pro — Parc SONABEL v1.3",
+    page_title="IA Réseau Pro — Parc SONABEL v1.4",
     page_icon="⚡",
     layout="wide",
 )
 
-APP_VERSION = "1.3 — routage séparé, rafraîchissement par fragment"
+APP_VERSION = "1.4 — décision assistée par l'IA"
 
 # ============================================================================
 # INTERFACE DESKTOP — IA RÉSEAU PRO
@@ -477,6 +477,185 @@ def render_temperature_gauge(temp, label="Température ambiante"):
         state, icon = "Très forte chaleur", "🔴"
     st.markdown(f"**🌡️ {label} : {value:.1f} °C** · {icon} {state}")
     st.progress(pct, text=f"15 °C    ─────────────    50 °C   |   {value:.1f} °C")
+
+
+# ============================================================================
+# DÉCISION ASSISTÉE PAR L'IA
+# ============================================================================
+# Répartition des rôles (à expliquer au jury) :
+#   - le modèle XGBoost calcule le risque, identifie la variable qui pèse le
+#     plus dans ce risque, et estime l'effet d'une action corrective ;
+#   - les règles métier (dictionnaires ci-dessous) traduisent cette cause en
+#     démarche concrète à engager.
+
+DRIVER_ACTIONS = {
+    "Charge relative": (
+        "Réduire la charge : reporter une partie des abonnés vers un poste "
+        "voisin ou délester les départs les moins prioritaires."
+    ),
+    "Température huile": (
+        "Contrôler le refroidissement (radiateurs, niveau d'huile) et réduire "
+        "la charge le temps que l'huile refroidisse."
+    ),
+    "Température ambiante": (
+        "Limiter la charge aux heures les plus chaudes et renforcer la "
+        "surveillance thermique de ce poste."
+    ),
+    "Humidité": (
+        "Contrôler l'étanchéité et l'assécheur d'air, puis mesurer la "
+        "résistance d'isolement."
+    ),
+    "Tension": (
+        "Vérifier le réglage de la tension amont et l'état des parafoudres."
+    ),
+}
+
+RISK_LEVEL_ACTIONS = [
+    (65, "🔴 Inspection prioritaire"),
+    (50, "🟠 Planifier une inspection préventive"),
+    (35, "🟡 Surveillance renforcée"),
+    (0, "🟢 Surveillance normale"),
+]
+
+
+def ai_what_if(features, ttype, driver, bonus=0.0):
+    """Risque recalculé par le modèle si l'on agit sur la cause principale."""
+    f = dict(features)
+    if driver in ("Charge relative", "Température huile", "Température ambiante"):
+        d = min(0.2, f["charge"] - 0.2)
+        if d <= 0:
+            return None
+        f["charge"] -= d
+        f["oil_temp"] -= 28 * d  # même relation charge → huile que le mode manuel
+        label = f"charge réduite de {d * 100:.0f} points"
+    elif driver == "Tension":
+        f["voltage"] = 1.0
+        label = "tension ramenée à 1,00 p.u."
+    else:
+        return None
+    after = float(np.clip(predict_risk(f, ttype) + bonus, 0, 100))
+    return after, label
+
+
+def ai_decision(features, ttype, risk, bonus=0.0):
+    df = local_risk_sensitivity(features, ttype)
+    top = df.sort_values("Effet local (pts)", ascending=False).iloc[0]
+    effect = float(top["Effet local (pts)"])
+    driver = top["Variable"] if effect > 0.05 else None
+    level_action = next(txt for lo, txt in RISK_LEVEL_ACTIONS if risk >= lo)
+    what_if = ai_what_if(features, ttype, driver, bonus) if (driver and risk >= 35) else None
+    return {
+        "driver": driver,
+        "effect": effect,
+        "source": df.attrs.get("source", "analyse locale"),
+        "level_action": level_action,
+        "action": DRIVER_ACTIONS.get(driver) if driver else None,
+        "what_if": what_if,
+    }
+
+
+def render_ai_card(t, features, risk, mode, bonus=0.0):
+    """Fiche de décision : diagnostic, cause, démarche, effet attendu."""
+    d = ai_decision(features, t["type"], risk, bonus)
+    priority, score = transformer_priority(t, risk)
+
+    # Notification uniquement lors d'un changement de niveau.
+    band, _ = risk_band(risk)
+    key = f"prev_band_{mode}_{t['id']}"
+    prev = st.session_state.get(key)
+    if prev is not None and prev != band and risk >= 50:
+        st.toast(f"{t['nom']} : risque passé en « {band} » ({risk:.0f} %)", icon="🚨")
+    st.session_state[key] = band
+
+    with st.container(border=True):
+        st.markdown("**🤖 Décision assistée par l'IA**")
+        st.markdown(f"**Diagnostic :** risque {risk:.1f} % — {d['level_action']}")
+        if d["driver"]:
+            st.markdown(
+                f"**Cause principale détectée :** {d['driver']} "
+                f"(sensibilité locale {d['effect']:+.1f} pt)"
+            )
+        if d["action"] and risk >= 35:
+            st.markdown(f"**Démarche recommandée :** {d['action']}")
+        if d["what_if"]:
+            after, label = d["what_if"]
+            st.markdown(
+                f"**Effet attendu :** {label} → risque "
+                f"**{risk:.1f} % → {after:.1f} %** ({after - risk:+.1f} pts)"
+            )
+        st.caption(
+            f"Priorité indicative : {priority} ({score:.0f}/100) · "
+            f"Source : {d['source']}. Estimation à confirmer par les "
+            "procédures d'exploitation."
+        )
+
+
+def season_for_month(month):
+    if month in (3, 4, 5):
+        return "Saison sèche chaude"
+    if month in (6, 7, 8, 9, 10):
+        return "Saison des pluies"
+    return "Harmattan"
+
+
+def render_ai_forecast(rows):
+    """Anticipation : risque prévu par le modèle à partir des prévisions météo."""
+    st.markdown("### 🔮 Risque prévu par l'IA sur 7 jours")
+    st.caption(
+        "Le modèle est appliqué aux prévisions météo des 7 prochains jours. "
+        "Hypothèses : charge constante (curseur ci-dessous), tension nominale, "
+        "humidité déduite de la probabilité de pluie, température d'huile "
+        "calculée comme en mode manuel."
+    )
+    charge = st.slider(
+        "Charge moyenne supposée (relative)", 0.4, 1.3, 0.9, 0.05,
+        key="forecast_charge",
+    )
+    season = season_for_month(datetime.now().month)
+
+    records = []
+    for r in rows:
+        day = pd.to_datetime(r["date"]).strftime("%a %d/%m")
+        hum = float(np.clip(25 + 0.55 * r["pluie_pct"], 5, 100))
+        oil = 45 + 28 * charge + max(0.0, r["tmax"] - 30) * 0.6
+        for t in TRANSFORMERS:
+            f = {
+                "charge": charge,
+                "oil_temp": oil,
+                "ambient": r["tmax"],
+                "humidity": hum,
+                "voltage": 1.0,
+                "season_label": season,
+            }
+            records.append({
+                "Jour": day,
+                "Transformateur": t["nom"],
+                "Risque prévu (%)": round(predict_risk(f, t["type"]), 1),
+            })
+
+    df = pd.DataFrame(records)
+
+    fig = px.line(df, x="Jour", y="Risque prévu (%)", color="Transformateur", markers=True)
+    fig.update_yaxes(range=[0, 100])
+    fig.add_hline(y=50, line_dash="dash", line_color="orange")
+    fig.add_hline(y=65, line_dash="dash", line_color="red")
+    st.plotly_chart(fig, use_container_width=True, key="forecast_risk_chart")
+
+    watch = df[df["Risque prévu (%)"] >= 50]
+    if watch.empty:
+        st.success(
+            "🟢 Aucun transformateur ne dépasse 50 % de risque sur les 7 "
+            "prochains jours avec ces hypothèses."
+        )
+    else:
+        worst = watch.sort_values("Risque prévu (%)", ascending=False).iloc[0]
+        st.warning(
+            f"⚠️ L'IA anticipe {len(watch)} situation(s) à 50 % ou plus. "
+            f"Pic : **{worst['Transformateur']}** le **{worst['Jour']}** "
+            f"({worst['Risque prévu (%)']:.1f} %). Démarche : programmer une "
+            "inspection préventive avant cette date et préparer un report de charge."
+        )
+        st.dataframe(watch, use_container_width=True, hide_index=True)
 
 
 def build_intervention_report():
@@ -1280,6 +1459,8 @@ def render_manual_mode():
             else:
                 st.success(f"🟢 **Risque faible — {risk:.1f} %**")
 
+            render_ai_card(t, features, risk, "manuel")
+
 
 # ============================================================================
 # SECTION 2 — SIMULATION DE PANNES
@@ -1506,6 +1687,8 @@ def render_simulation_mode():
             else:
                 st.success(f"🟢 **Risque faible — {risk:.1f} %**")
 
+            render_ai_card(t, features, risk, "sim", climate_bonus)
+
             st.caption(
                 f"🌡️ T° huile estimée : {oil_temp:.1f} °C · "
                 f"💧 Humidité perçue : {humidity_adj:.0f} %"
@@ -1527,7 +1710,7 @@ def render_simulation_mode():
 
                 st.markdown("**Pronostic :** " + prognosis_text(risk, slope, active_failure))
 
-                st.markdown("**Actions réseau recommandées :**")
+                st.markdown("**Conduite à tenir associée au scénario (règles métier) :**")
                 for action in NETWORK_ACTIONS_BY_FAILURE.get(active_failure, []):
                     st.markdown(f"- {action}")
                 st.markdown("- " + NETWORK_ACTIONS_BY_TYPE.get(t["type"], ""))
@@ -1685,6 +1868,8 @@ def render_weather():
         title="Probabilité de pluie et indice de forte chaleur — 7 prochains jours",
     )
     st.plotly_chart(fig, use_container_width=True, key="weather_forecast_chart")
+
+    render_ai_forecast(rows)
 
 
 # ============================================================================
@@ -1848,7 +2033,7 @@ live_page()
 # ============================================================================
 
 st.markdown(
-    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.3 — ROUTAGE SÉPARÉ</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
+    f"""<div class="statusbar"><span>⚡ IA RÉSEAU PRO v1.4 — DÉCISION ASSISTÉE PAR L'IA</span><span>● Supervision : {running_label}</span><span>● Modèle : {model_label}</span><span>● Météo : {('Connectée' if live_ok else 'Hors ligne')}</span><span>● Transformateurs : {len(TRANSFORMERS)}</span></div>""",
     unsafe_allow_html=True,
 )
 
