@@ -449,23 +449,71 @@ def measurement_boundary_risk(features: dict) -> tuple[float, list[str]]:
     return float(np.clip(risk, 0.0, 35.0)), alerts
 
 
+def responsive_operational_risk(features: dict) -> float:
+    """Composante physique réactive pour éviter un retard visuel du risque.
+
+    Le modèle XGBoost reste la composante IA. Cette couche traduit rapidement
+    les dépassements évidents des grandeurs surveillées afin que l'interface
+    réagisse dès qu'un curseur entre dans une zone préoccupante.
+    """
+    charge = float(features.get("charge", 0.8))
+    oil = float(features.get("oil_temp", 50.0))
+    ambient = float(features.get("ambient", 32.0))
+    humidity = float(features.get("humidity", 50.0))
+    voltage = float(features.get("voltage", 1.0))
+
+    risk = 1.2  # risque résiduel minimal en fonctionnement normal
+
+    # Charge : réaction volontairement rapide après 80 % de charge.
+    if charge > 0.80:
+        risk += (charge - 0.80) * 115.0
+
+    # Température huile : accélération progressive puis forte au-delà de 75 °C.
+    if oil > 60.0:
+        risk += (oil - 60.0) * 1.35
+    if oil > 75.0:
+        risk += (oil - 75.0) * 1.00
+
+    # Ambiance chaude : effet secondaire mais visible.
+    if ambient > 32.0:
+        risk += (ambient - 32.0) * 1.8
+
+    # Humidité élevée : contribution à l'isolement.
+    if humidity > 60.0:
+        risk += (humidity - 60.0) * 0.55
+
+    # Écart de tension : réaction des deux côtés de la valeur nominale.
+    deviation = abs(voltage - 1.0)
+    if deviation > 0.02:
+        risk += (deviation - 0.02) * 105.0
+
+    return float(np.clip(risk, 1.0, 100.0))
+
+
 def predict_risk(features: dict, ttype: str) -> float:
     season_code = SEASON_CODES.get(features.get("season_label", "Saison sèche chaude"), 1)
 
     if MODEL is not None:
         try:
-            base = float(MODEL.predict_proba(_model_input(features, season_code))[0][1] * 100)
+            model_risk = float(MODEL.predict_proba(_model_input(features, season_code))[0][1] * 100)
         except Exception:
-            base = _heuristic_risk(features, season_code)
+            model_risk = _heuristic_risk(features, season_code)
     else:
-        base = _heuristic_risk(features, season_code)
+        model_risk = _heuristic_risk(features, season_code)
 
+    # Couche réactive : elle permet au risque affiché de suivre immédiatement
+    # une variation physique, même si l'arbre XGBoost change peu localement.
+    reactive = responsive_operational_risk(features)
     boundary_risk, _ = measurement_boundary_risk(features)
-    # Un fonctionnement normal n'est jamais affiché à 0 % : même en régime
-    # sain, une incertitude résiduelle subsiste (mesure, capteurs, modèle).
+    model_component = model_risk * TYPE_MULTIPLIER.get(ttype, 1.0)
+
+    # Le modèle conserve le poids principal ; la couche réactive garantit une
+    # réponse rapide aux dépassements évidents.
+    combined = 0.65 * model_component + 0.35 * reactive + boundary_risk
+
+    # Un fonctionnement normal n'est jamais affiché à 0 %.
     floor = 1.0
-    combined = max(floor, base * TYPE_MULTIPLIER.get(ttype, 1.0) + boundary_risk)
-    return float(np.clip(combined, floor, 100))
+    return float(np.clip(max(floor, combined), floor, 100))
 
 
 def _heuristic_risk(f: dict, season_code: int):
