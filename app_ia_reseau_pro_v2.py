@@ -403,6 +403,52 @@ def _model_input(f: dict, season_code: int) -> pd.DataFrame:
     }])
 
 
+def measurement_boundary_risk(features: dict) -> tuple[float, list[str]]:
+    """Détecte les valeurs proches des limites de mesure.
+
+    Un niveau très faible n'est pas assimilé directement à une panne : il peut
+    signaler un capteur, une acquisition ou un transformateur réellement hors
+    service. Le score reste volontairement modéré tant qu'aucune autre grandeur
+    ne confirme une dégradation.
+    """
+    risk = 0.0
+    alerts = []
+    voltage = float(features.get("voltage", 1.0))
+    charge = float(features.get("charge", 0.8))
+    oil = float(features.get("oil_temp", 50.0))
+    humidity = float(features.get("humidity", 50.0))
+
+    if voltage <= 0.92:
+        risk += min(14.0, (0.92 - voltage) * 140.0)
+        alerts.append("Tension très basse : vérifier réseau, mesure et capteur.")
+    elif voltage >= 1.08:
+        risk += min(18.0, (voltage - 1.08) * 180.0)
+        alerts.append("Tension très élevée : vérifier réseau et protection contre les surtensions.")
+
+    if charge <= 0.05:
+        risk += 4.0
+        alerts.append("Courant presque nul : vérifier capteur, départ BT et état du transformateur.")
+    elif charge >= 1.25:
+        risk += min(22.0, (charge - 1.25) * 70.0)
+        alerts.append("Charge très élevée : risque de surcharge thermique.")
+
+    if oil <= 35.5:
+        risk += 3.0
+        alerts.append("Température huile anormalement basse : vérifier capteur et cohérence de la mesure.")
+    elif oil >= 95.0:
+        risk += min(20.0, (oil - 95.0) * 0.8)
+        alerts.append("Température huile très élevée : vérifier échauffement et refroidissement.")
+
+    if humidity <= 8.0:
+        risk += 1.5
+        alerts.append("Humidité très faible : vérifier la cohérence du capteur avant interprétation.")
+    elif humidity >= 90.0:
+        risk += min(12.0, (humidity - 90.0) * 0.6)
+        alerts.append("Humidité très élevée : contrôler l'isolement et les conditions ambiantes.")
+
+    return float(np.clip(risk, 0.0, 35.0)), alerts
+
+
 def predict_risk(features: dict, ttype: str) -> float:
     season_code = SEASON_CODES.get(features.get("season_label", "Saison sèche chaude"), 1)
 
@@ -414,7 +460,12 @@ def predict_risk(features: dict, ttype: str) -> float:
     else:
         base = _heuristic_risk(features, season_code)
 
-    return float(np.clip(base * TYPE_MULTIPLIER.get(ttype, 1.0), 0, 100))
+    boundary_risk, _ = measurement_boundary_risk(features)
+    # Un fonctionnement normal n'est jamais affiché à 0 % : même en régime
+    # sain, une incertitude résiduelle subsiste (mesure, capteurs, modèle).
+    floor = 1.0
+    combined = max(floor, base * TYPE_MULTIPLIER.get(ttype, 1.0) + boundary_risk)
+    return float(np.clip(combined, floor, 100))
 
 
 def _heuristic_risk(f: dict, season_code: int):
@@ -1646,34 +1697,56 @@ def _compact_interpretation(t, features, risk, slope, simulated=None):
 
 
 def render_manual_mode():
-    """Poste de pilotage manuel compact : commandes + IA + évolution sur une seule vue."""
-    st.markdown("<div class='compact-head'><div><div class='compact-head-title'>🖐️ POSTE DE PILOTAGE MANUEL</div><div class='compact-head-sub'>Réglage instantané · XGBoost · interprétation locale</div></div><span class='live-dot'></span></div>", unsafe_allow_html=True)
+    """Poste manuel : toutes les grandeurs affichées suivent instantanément les commandes."""
+    st.markdown(
+        "<div class='compact-head'><div><div class='compact-head-title'>🖐️ POSTE DE PILOTAGE MANUEL</div>"
+        "<div class='compact-head-sub'>Réglage instantané · XGBoost · surveillance des limites de mesure</div>"
+        "</div><span class='live-dot'></span></div>",
+        unsafe_allow_html=True,
+    )
+
     top1, top2, top3 = st.columns([1.1, 1.0, 1.0])
     with top1:
-        tid = st.selectbox("Transformateur", [t["id"] for t in TRANSFORMERS], format_func=lambda x: next(t["nom"] for t in TRANSFORMERS if t["id"] == x), key="manual_selected_transformer")
+        tid = st.selectbox(
+            "Transformateur", [t["id"] for t in TRANSFORMERS],
+            format_func=lambda x: next(t["nom"] for t in TRANSFORMERS if t["id"] == x),
+            key="manual_selected_transformer",
+        )
     t = next(x for x in TRANSFORMERS if x["id"] == tid)
     i_nom = nominal_current(t)
     with top2:
-        scenario_options = ["Fonctionnement normal"] + list(FAILURE_MODES.keys())
-        scenario = st.selectbox("Scénario pédagogique", scenario_options, key="manual_scenario")
-    with top3:
         season_options = list(SEASON_PRESETS.keys())
-        manual_season = st.selectbox("Saison", season_options, index=season_options.index(st.session_state.manual_season), key="manual_season_select")
+        manual_season = st.selectbox(
+            "Saison", season_options,
+            index=season_options.index(st.session_state.manual_season),
+            key="manual_season_select",
+        )
         st.session_state.manual_season = manual_season
+    with top3:
+        st.markdown(
+            f"<div class='control-panel' style='margin-top:3px'><div class='control-title'>⚙️ Référence</div>"
+            f"<div style='font-size:13px'>Puissance : <b>{RATINGS_KVA[t['nom']]} kVA</b><br>"
+            f"Courant nominal : <b>{i_nom:.0f} A</b></div></div>",
+            unsafe_allow_html=True,
+        )
 
-    preset = FAILURE_MODES.get(scenario, {}).get("effet", {}) if scenario != "Fonctionnement normal" else {}
-    base_charge = float(np.clip(0.80 + preset.get("charge", 0), 0.0, 1.5))
-    base_voltage = float(np.clip(1.00 + preset.get("voltage", 0), 0.90, 1.15))
-    base_oil = float(np.clip(45 + 28 * base_charge + preset.get("oil_temp", 0) * 0.35, 30, 120))
-    base_hum = float(np.clip(SEASON_PRESETS[manual_season]["humidity"] + preset.get("humidity", 0) * 0.5, 5, 100))
-    base_amb = float(np.clip(32 + preset.get("ambient", 0) * 0.5, 15, 50))
+    # Valeurs de référence saines : elles servent uniquement à initialiser les curseurs.
+    base_charge = 0.80
+    base_voltage = 1.00
+    base_oil = float(np.clip(45 + 28 * base_charge, 35, 120))
+    base_hum = float(np.clip(SEASON_PRESETS[manual_season]["humidity"], 5, 100))
+    base_amb = 32.0
 
     left, center, right = st.columns([1.12, 1.0, 1.25], gap="small")
     with left:
-        st.markdown("<div class='control-panel'><div class='control-title'>🎛️ Commandes de simulation</div>", unsafe_allow_html=True)
+        st.markdown("<div class='control-panel'><div class='control-title'>🎛️ Commandes manuelles</div>", unsafe_allow_html=True)
         volts = st.slider("Tension BT (V)", 350.0, 460.0, base_voltage * U_NOM, 2.0, key=f"m_v_{tid}")
         max_amp = float(max(100, round(1.5 * i_nom / 5) * 5))
-        amps = st.slider("Courant de charge (A)", 0.0, max_amp, float(np.clip(base_charge * i_nom / max(base_voltage, .1),0,max_amp)), 5.0, key=f"m_i_{tid}")
+        amps = st.slider(
+            "Courant de charge (A)", 0.0, max_amp,
+            float(np.clip(base_charge * i_nom / max(base_voltage, .1), 0, max_amp)), 5.0,
+            key=f"m_i_{tid}"
+        )
         oil_temp = st.slider("Température huile (°C)", 35.0, 120.0, base_oil, 1.0, key=f"m_oil_{tid}")
         ambient = st.slider("Température ambiante (°C)", 15.0, 50.0, base_amb, .5, key=f"m_amb_{tid}")
         humidity = st.slider("Humidité (%)", 5.0, 100.0, base_hum, 1.0, key=f"m_hum_{tid}")
@@ -1683,14 +1756,23 @@ def render_manual_mode():
     voltage_pu = volts / U_NOM
     current_ratio = amps / max(i_nom, 1e-6)
     charge = float(np.clip(voltage_pu * current_ratio, 0.0, 1.5))
-    features = {"charge": charge, "oil_temp": oil_temp, "ambient": ambient, "humidity": humidity, "voltage": voltage_pu, "season_label": manual_season}
+    # Indicateur visuel dérivé du déséquilibre et de la charge. Ce n'est pas une
+    # variable du modèle XGBoost et il ne doit pas être présenté comme un angle
+    # de phase mesuré sans capteur dédié.
+    dephasage_indicatif = float(np.clip(5.0 + 0.55 * imbalance + 8.0 * max(0.0, charge - 0.8), 5.0, 35.0))
+
+    features = {
+        "charge": charge, "oil_temp": oil_temp, "ambient": ambient,
+        "humidity": humidity, "voltage": voltage_pu, "season_label": manual_season
+    }
     risk = predict_risk(features, t["type"])
     if imbalance > 10:
-        risk = float(np.clip(risk + (imbalance - 10) * 0.35, 0, 100))
+        risk = float(np.clip(risk + (imbalance - 10) * 0.35, 1.0, 100))
     push_history(tid, risk, features)
     slope, trend_cat = compute_trend(tid)
     band, emoji = risk_band(risk)
     update_last_status(tid, risk, slope, trend_cat, band, emoji, source="manuel", failure=None, progress=0.0, features=features)
+    boundary_risk, boundary_alerts = measurement_boundary_risk(features)
 
     with center:
         color = _compact_risk_color(risk)
@@ -1698,9 +1780,22 @@ def render_manual_mode():
         top = rows[0] if rows else None
         panne = top[1] if top else "Aucune"
         pct = top[2] if top else 0
-        st.markdown(f"<div class='ai-panel'><div class='ai-small'>🤖 RISQUE IA — {t['nom']}</div><div class='ai-big' style='color:{color}'>{risk:.0f}%</div><div class='ai-badge'>{emoji} {band}</div><div class='ai-line'></div><div class='ai-small'>PANNE À ANTICIPER</div><div style='font-size:18px;font-weight:850;margin-top:3px'>{panne}</div><div style='font-size:12px;color:#a9cce0'>Part estimée : {pct:.0f}% · tendance {slope:+.2f} pt/min</div></div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='ai-panel'><div class='ai-small'>🤖 RISQUE IA — {t['nom']}</div>"
+            f"<div class='ai-big' style='color:{color}'>{risk:.1f}%</div>"
+            f"<div class='ai-badge'>{emoji} {band}</div>"
+            f"<div style='font-size:10px;color:#8fb4c9;margin-top:8px'>0 % = absence de risque absolue · 100 % = niveau maximal</div>"
+            f"</div>", unsafe_allow_html=True
+        )
+        st.progress(min(1.0, risk / 100.0), text=f"Jauge de risque · 0 % ───────── 100 % · {risk:.1f} %")
+        if boundary_alerts:
+            st.warning("⚠️ **Contrôle des limites :** " + " ".join(boundary_alerts[:2]))
+        else:
+            st.caption("✓ Les grandeurs restent dans une zone cohérente avec les limites surveillées.")
+        if top:
+            st.markdown(f"**Panne à anticiper :** {panne} · part estimée {pct:.1f} %")
         for _, label, p in rows[:3]:
-            st.progress(min(1, p / 100), text=f"{label.capitalize()} · {p:.0f}%")
+            st.progress(min(1, p / 100), text=f"{label.capitalize()} · {p:.1f}%")
 
     with right:
         st.markdown("<div class='control-panel'><div class='control-title'>🧠 Interprétation instantanée</div>", unsafe_allow_html=True)
@@ -1710,18 +1805,26 @@ def render_manual_mode():
             st.markdown(f"**Variable dominante :** {ai['driver']} ({ai['effect']:+.1f} pt)")
         if ai.get("action") and risk >= 35:
             st.markdown(f"**Action :** {ai['action']}")
-        if top and risk >= 35:
-            name = top[0]
-            action = NETWORK_ACTIONS_BY_FAILURE.get(name, ["Surveiller l'évolution de la grandeur concernée."])[0]
-            st.markdown(f"**Panne associée :** {FAILURE_LABELS.get(name,name)}")
-            st.caption(action)
+        if boundary_risk > 0:
+            st.info(f"**Surveillance capteurs / limites :** contribution {boundary_risk:.1f} pt au risque.")
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # Bandeau inférieur : les valeurs sont calculées à partir des commandes actuelles,
+    # donc aucune valeur fixe ne reste affichée lorsque l'utilisateur agit sur les curseurs.
     vals = [
-        ("Tension", f"{volts:.0f} V"), ("Courant", f"{amps:.0f} A"),
-        ("Charge calculée", f"{charge*100:.0f} %"), ("Huile", f"{oil_temp:.0f} °C"),
-        ("Humidité", f"{humidity:.0f} %"), ("Déséquilibre", f"{imbalance:.0f} %")]
-    st.markdown("<div class='sim-strip'>" + "".join(f"<div class='sim-cell'><div class='sim-label'>{a}</div><div class='sim-val'>{b}</div></div>" for a,b in vals) + "</div>", unsafe_allow_html=True)
+        ("Tension", f"{volts:.0f} V"),
+        ("Courant", f"{amps:.0f} A"),
+        ("Charge", f"{charge*100:.0f} %"),
+        ("Huile", f"{oil_temp:.0f} °C"),
+        ("Humidité", f"{humidity:.0f} %"),
+        ("Déphasage indicatif", f"{dephasage_indicatif:.1f}°"),
+    ]
+    st.markdown(
+        "<div class='sim-strip'>" +
+        "".join(f"<div class='sim-cell'><div class='sim-label'>{a}</div><div class='sim-val'>{b}</div></div>" for a,b in vals) +
+        "</div>", unsafe_allow_html=True
+    )
+    st.caption("Le déphasage indicatif est un indicateur dérivé de l'état de charge et du déséquilibre ; il n'est pas une mesure directe du facteur de puissance.")
 
     hist = list(st.session_state.history.get(tid, []))
     if len(hist) >= 2:
@@ -1733,7 +1836,6 @@ def render_manual_mode():
         st.plotly_chart(fig, use_container_width=True, key=f"manual_compact_chart_{tid}")
     else:
         st.caption("Déplacez un curseur : la courbe du risque se construit automatiquement ici.")
-
 
 
 
