@@ -462,28 +462,40 @@ def responsive_operational_risk(features: dict) -> float:
     humidity = float(features.get("humidity", 50.0))
     voltage = float(features.get("voltage", 1.0))
 
-    risk = 1.2  # risque résiduel minimal en fonctionnement normal
+    # Socle très faible, mais jamais nul.
+    risk = 1.0
 
-    # Charge : réaction volontairement rapide après 80 % de charge.
+    # Chaque déplacement d'un curseur modifie le risque, même avant les
+    # seuils critiques. Les seuils ajoutent ensuite une pénalisation forte.
+    charge_delta = abs(charge - 0.80)
+    risk += charge_delta * 28.0
     if charge > 0.80:
         risk += (charge - 0.80) * 115.0
+    if charge < 0.10:
+        risk += (0.10 - charge) * 35.0 + 2.5
 
-    # Température huile : accélération progressive puis forte au-delà de 75 °C.
+    oil_reference = 45.0 + 28.0 * 0.80
+    risk += abs(oil - oil_reference) * 0.18
     if oil > 60.0:
         risk += (oil - 60.0) * 1.35
     if oil > 75.0:
         risk += (oil - 75.0) * 1.00
+    if oil < 38.0:
+        risk += (38.0 - oil) * 0.35 + 2.0
 
-    # Ambiance chaude : effet secondaire mais visible.
+    risk += abs(ambient - 32.0) * 0.22
     if ambient > 32.0:
         risk += (ambient - 32.0) * 1.8
 
-    # Humidité élevée : contribution à l'isolement.
+    season_humidity = float(SEASON_PRESETS.get(
+        features.get("season_label", "Saison sèche chaude"), {}
+    ).get("humidity", 50.0))
+    risk += abs(humidity - season_humidity) * 0.08
     if humidity > 60.0:
         risk += (humidity - 60.0) * 0.55
 
-    # Écart de tension : réaction des deux côtés de la valeur nominale.
     deviation = abs(voltage - 1.0)
+    risk += deviation * 75.0
     if deviation > 0.02:
         risk += (deviation - 0.02) * 105.0
 
@@ -509,7 +521,7 @@ def predict_risk(features: dict, ttype: str) -> float:
 
     # Le modèle conserve le poids principal ; la couche réactive garantit une
     # réponse rapide aux dépassements évidents.
-    combined = 0.65 * model_component + 0.35 * reactive + boundary_risk
+    combined = 0.45 * model_component + 0.55 * reactive + boundary_risk
 
     # Un fonctionnement normal n'est jamais affiché à 0 %.
     floor = 1.0
