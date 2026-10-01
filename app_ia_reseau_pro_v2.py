@@ -104,6 +104,24 @@ div[data-testid="stMetric"]:after{content:"";position:absolute;right:-25px;botto
 .sim-cell{background:#f7fafc;border:1px solid #d8e4ed;border-radius:9px;padding:7px 8px}.sim-label{font-size:9px;color:#70879b;text-transform:uppercase;letter-spacing:.7px}.sim-val{font-size:16px;font-weight:850;color:#0a3155}
 .interpret-box{background:#edf8ff;border-left:4px solid #0b8ed0;border-radius:9px;padding:9px 11px;font-size:12px;color:#173a55}
 @media(max-width:1100px){.sim-strip{grid-template-columns:repeat(3,minmax(0,1fr));}}
+
+.transformer-visual-wrap{background:linear-gradient(145deg,#061b32,#0b4770);border:1px solid rgba(44,185,230,.28);border-radius:16px;padding:14px;box-shadow:0 12px 30px rgba(3,30,55,.18);overflow:hidden}
+.transformer-visual-head{display:flex;justify-content:space-between;align-items:center;color:#eaf8ff;margin-bottom:8px}
+.transformer-visual{position:relative;height:190px;border-radius:12px;background:radial-gradient(circle at 50% 20%,rgba(24,168,216,.14),transparent 34%),linear-gradient(180deg,#092a49,#061a31);overflow:hidden}
+.tv-ground{position:absolute;left:8%;right:8%;bottom:18px;height:3px;background:#4e7189;border-radius:5px}
+.tv-tank{position:absolute;left:27%;right:27%;bottom:31px;height:86px;border-radius:8px;background:linear-gradient(90deg,#7893a4,#d8e3e9 45%,#708b9c);border:2px solid #4d697a;box-shadow:inset 0 0 18px rgba(0,0,0,.18),0 8px 18px rgba(0,0,0,.2)}
+.tv-radiator{position:absolute;bottom:42px;width:10px;height:68px;border-radius:3px;background:repeating-linear-gradient(180deg,#4f6878 0 5px,#a9bac4 5px 8px);opacity:.9}
+.tv-r1{left:22%}.tv-r2{right:22%}
+.tv-bushing{position:absolute;bottom:116px;width:13px;height:42px;border-radius:7px 7px 3px 3px;background:linear-gradient(90deg,#273d4d,#d5e4ea,#263b4b);border:1px solid #9db4c0}
+.tv-b1{left:35%}.tv-b2{left:49%}.tv-b3{right:35%}
+.tv-cable{position:absolute;top:21px;width:2px;height:65px;background:#9bc7dc}.tv-c1{left:35.6%}.tv-c2{left:50%}.tv-c3{right:35.6%}
+.tv-pole{position:absolute;left:18%;right:18%;bottom:18px;height:7px;background:#526b78;border-radius:4px}
+.tv-label{position:absolute;left:12px;top:10px;color:#86dff5;font-size:10px;font-weight:850;letter-spacing:1px;text-transform:uppercase}
+.tv-status{position:absolute;right:12px;top:10px;font-size:10px;color:#d8f5ff;font-weight:800}
+.tv-pulse{position:absolute;left:50%;top:45%;width:18px;height:18px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid rgba(21,197,232,.7);animation:tvPulse 1.8s ease-in-out infinite}
+.tv-alert{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);font-size:10px;color:#dff8ff;white-space:nowrap}
+@keyframes tvPulse{0%,100%{opacity:.25;box-shadow:0 0 0 0 rgba(21,197,232,.15)}50%{opacity:1;box-shadow:0 0 0 13px rgba(21,197,232,0)}}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,7 +145,11 @@ SIM_RELATIVE_RISK = True
 # Grandeurs électriques en unités réelles (côté basse tension).
 # ATTENTION : puissances nominales = VALEURS D'EXEMPLE, à remplacer par les
 # valeurs des plaques signalétiques réelles des transformateurs.
-RATINGS_KVA = {"TR-01": 630, "TR-02": 400, "TR-03": 160}
+RATINGS_KVA = {
+    "TR-01": 630, "TR-02": 400, "TR-03": 160,
+    "TR-04": 400, "TR-05": 250, "TR-06": 630, "TR-07": 160,
+    "TR-08": 400, "TR-09": 250, "TR-10": 630,
+}
 U_NOM = 400.0  # V, tension nominale BT entre phases (soit 230 V phase-neutre)
 
 
@@ -150,63 +172,95 @@ def load_zone(c):
         return "🟠 surcharge admissible"
     return "🔴 surcharge critique"
 
-# ============================================================================
-# TRANSFORMATEURS
-# ============================================================================
 
+# ============================================================================
+# PROFILS CLIMATIQUES LOCAUX — VALEURS DE SIMULATION
+# ============================================================================
+# Ces écarts servent à différencier le comportement des postes selon leur ville.
+# Ils constituent des profils de simulation et non des mesures météorologiques
+# temps réel propres à chaque poste.
+CITY_CLIMATE = {
+    "Ouagadougou": {"ambient_offset": 0.0, "humidity_offset": 0.0},
+    "Bobo-Dioulasso": {"ambient_offset": 1.5, "humidity_offset": 8.0},
+    "Koudougou": {"ambient_offset": 0.7, "humidity_offset": 4.0},
+}
+
+
+def local_climate_reference(t, season_label):
+    season = SEASON_PRESETS.get(season_label, SEASON_PRESETS["Saison sèche chaude"])
+    profile = CITY_CLIMATE.get(t.get("ville", "Ouagadougou"), CITY_CLIMATE["Ouagadougou"])
+    return {
+        "ambient": float(np.clip(season["temp_ref"] + profile["ambient_offset"], 15, 50)),
+        "humidity": float(np.clip(season["humidity"] + profile["humidity_offset"], 5, 100)),
+    }
+
+
+# ============================================================================
+# TRANSFORMATEURS — PARC DE 10 POSTES
+# ============================================================================
 TRANSFORMERS = [
     {
-        "id": 1,
-        "nom": "TR-01",
-        "type": "Cabine maçonnée",
-        "quartier": "Ouaga 2000",
-        "lat": 12.3350,
-        "lon": -1.4810,
-        "obstacles": [
-            "Immeubles administratifs proches (accès camion facile)",
-            "Voie bitumée dégagée jusqu'au poste",
-            "Peu de végétation à proximité immédiate",
-        ],
-        "vulnerabilite": (
-            "Faible exposition climatique directe ; bonne protection "
-            "mécanique ; accès aisé pour la maintenance."
-        ),
+        "id": 1, "nom": "TR-01", "ville": "Ouagadougou", "quartier": "Ouaga 2000",
+        "type": "Cabine maçonnée", "lat": 12.3350, "lon": -1.4810,
+        "obstacles": ["Immeubles administratifs proches", "Voie bitumée dégagée", "Peu de végétation"],
+        "vulnerabilite": "Bonne protection mécanique et accès aisé pour la maintenance.",
     },
     {
-        "id": 2,
-        "nom": "TR-02",
-        "type": "Préfabriqué",
-        "quartier": "Gounghin",
-        "lat": 12.3721,
-        "lon": -1.5310,
-        "obstacles": [
-            "Marché de Gounghin à proximité (forte affluence, stationnement anarchique)",
-            "Ligne aérienne basse tension croisant l'accès",
-            "Caniveau d'évacuation des eaux pluviales longeant le poste",
-        ],
-        "vulnerabilite": (
-            "Exposition modérée ; accès parfois gêné par l'activité "
-            "commerciale environnante."
-        ),
+        "id": 2, "nom": "TR-02", "ville": "Ouagadougou", "quartier": "Gounghin",
+        "type": "Préfabriqué", "lat": 12.3721, "lon": -1.5310,
+        "obstacles": ["Zone commerciale dense", "Ligne BT proche", "Caniveau d'évacuation des eaux"],
+        "vulnerabilite": "Exposition modérée et accès parfois gêné par l'activité environnante.",
     },
     {
-        "id": 3,
-        "nom": "TR-03",
-        "type": "Haut de poteau",
-        "quartier": "Tanghin",
-        "lat": 12.4010,
-        "lon": -1.4870,
-        "obstacles": [
-            "Grand arbre à moins de 5 m (risque de chute de branches sur la ligne)",
-            "Proximité du barrage de Tanghin (humidité ambiante élevée, berges)",
-            "Habitations rapprochées limitant la manœuvre d'une nacelle",
-        ],
-        "vulnerabilite": (
-            "Forte exposition climatique (foudre, vent, humidité du barrage) ; "
-            "accès à la nacelle parfois difficile."
-        ),
+        "id": 3, "nom": "TR-03", "ville": "Ouagadougou", "quartier": "Tanghin",
+        "type": "Haut de poteau", "lat": 12.4010, "lon": -1.4870,
+        "obstacles": ["Arbre proche de la ligne", "Proximité du barrage", "Habitations rapprochées"],
+        "vulnerabilite": "Exposition climatique et intervention en hauteur plus contraignante.",
+    },
+    {
+        "id": 4, "nom": "TR-04", "ville": "Bobo-Dioulasso", "quartier": "Accart-Ville",
+        "type": "Haut de poteau", "lat": 11.1800, "lon": -4.3000,
+        "obstacles": ["Réseau aérien urbain", "Végétation proche", "Accès nacelle à sécuriser"],
+        "vulnerabilite": "Poste aérien exposé à la chaleur, à l'humidité et aux intempéries.",
+    },
+    {
+        "id": 5, "nom": "TR-05", "ville": "Bobo-Dioulasso", "quartier": "Belle-Ville",
+        "type": "Cabine maçonnée", "lat": 11.1750, "lon": -4.2920,
+        "obstacles": ["Zone résidentielle", "Accès véhicule disponible", "Ruissellement à surveiller"],
+        "vulnerabilite": "Bonne protection mais conditions thermiques et humidité à surveiller.",
+    },
+    {
+        "id": 6, "nom": "TR-06", "ville": "Bobo-Dioulasso", "quartier": "Dafra",
+        "type": "Préfabriqué", "lat": 11.1600, "lon": -4.3100,
+        "obstacles": ["Activité urbaine", "Poussière saisonnière", "Accès maintenance à maintenir dégagé"],
+        "vulnerabilite": "Poste fermé soumis aux variations thermiques et à l'humidité locale.",
+    },
+    {
+        "id": 7, "nom": "TR-07", "ville": "Bobo-Dioulasso", "quartier": "Konsa",
+        "type": "Haut de poteau", "lat": 11.1950, "lon": -4.2750,
+        "obstacles": ["Ligne aérienne", "Végétation", "Intervention en hauteur"],
+        "vulnerabilite": "Exposition directe aux conditions climatiques et aux contraintes d'accès.",
+    },
+    {
+        "id": 8, "nom": "TR-08", "ville": "Koudougou", "quartier": "Centre-ville",
+        "type": "Haut de poteau", "lat": 12.2500, "lon": -2.3700,
+        "obstacles": ["Réseau aérien", "Circulation urbaine", "Accès nacelle à sécuriser"],
+        "vulnerabilite": "Exposition extérieure avec intervention en hauteur.",
+    },
+    {
+        "id": 9, "nom": "TR-09", "ville": "Koudougou", "quartier": "Secteur 10",
+        "type": "Cabine maçonnée", "lat": 12.2450, "lon": -2.3600,
+        "obstacles": ["Zone résidentielle", "Accès véhicule", "Poussière saisonnière"],
+        "vulnerabilite": "Protection mécanique correcte, avec surveillance thermique.",
+    },
+    {
+        "id": 10, "nom": "TR-10", "ville": "Koudougou", "quartier": "Secteur 7",
+        "type": "Haut de poteau", "lat": 12.2580, "lon": -2.3500,
+        "obstacles": ["Ligne aérienne", "Végétation ponctuelle", "Manœuvre en hauteur"],
+        "vulnerabilite": "Exposition climatique directe et accès nécessitant une nacelle.",
     },
 ]
+
 
 # ============================================================================
 # MODES DE PANNE
@@ -1109,6 +1163,7 @@ def init_state():
         "sim_start_time": lambda: {t["id"]: None for t in TRANSFORMERS},
         "event_log": list,
         "active_event": lambda: {t["id"]: None for t in TRANSFORMERS},
+        "simulation_event": lambda: {t["id"]: None for t in TRANSFORMERS},
         # État opérationnel utilisé par les pages hors simulation.
         "last_status": create_last_status,
         # État strictement isolé du mode simulation.
@@ -1128,6 +1183,7 @@ def init_state():
         st.session_state.sim_failure.setdefault(tid, None)
         st.session_state.sim_start_time.setdefault(tid, None)
         st.session_state.active_event.setdefault(tid, None)
+        st.session_state.simulation_event.setdefault(tid, None)
         st.session_state.last_status.setdefault(tid, empty_status())
         st.session_state.simulation_status.setdefault(tid, empty_status())
         if tid not in st.session_state.history:
@@ -1218,6 +1274,37 @@ def update_last_status(
     )
 
 
+
+def render_transformer_visual(t, risk=0.0, active=False, progress=0.0, mode=""):
+    """Représentation graphique légère du transformateur, animée selon son état."""
+    risk = float(np.clip(risk, 0, 100))
+    pulse_color = "#ef4656" if risk >= 65 else "#f6a623" if risk >= 35 else "#19b875"
+    status = "PANNE ACTIVE" if active else ("SURVEILLANCE" if risk >= 35 else "FONCTIONNEMENT NORMAL")
+    type_label = t.get("type", "Transformateur")
+    city = t.get("ville", "")
+    html = f"""
+    <div class="transformer-visual-wrap">
+      <div class="transformer-visual-head">
+        <div><b>⚡ {t['nom']}</b> · {type_label}</div>
+        <div>{city} · {mode}</div>
+      </div>
+      <div class="transformer-visual">
+        <div class="tv-label">POSTE DE TRANSFORMATION · {t.get('quartier','')}</div>
+        <div class="tv-status" style="color:{pulse_color}">● {status} · {risk:.0f}%</div>
+        <div class="tv-cable tv-c1"></div><div class="tv-cable tv-c2"></div><div class="tv-cable tv-c3"></div>
+        <div class="tv-bushing tv-b1"></div><div class="tv-bushing tv-b2"></div><div class="tv-bushing tv-b3"></div>
+        <div class="tv-radiator tv-r1"></div><div class="tv-radiator tv-r2"></div>
+        <div class="tv-tank"></div>
+        <div class="tv-pole"></div>
+        <div class="tv-ground"></div>
+        <div class="tv-pulse" style="border-color:{pulse_color}"></div>
+        <div class="tv-alert">Dégradation simulée : {progress*100:.0f}% · surveillance thermique / électrique</div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
 # ============================================================================
 # MANUEL
 # ============================================================================
@@ -1236,27 +1323,65 @@ def animate_towards_target(t_id):
 # ÉVÉNEMENTS
 # ============================================================================
 
-def log_event_if_needed(t_id, nom, band_label, risk, panne_label):
+def _start_event(t_id, t, panne_label, mode="manuel", risk=0.0):
+    """Crée un événement horodaté sans doublon."""
+    now = datetime.now()
+    event = {
+        "transfo_id": t_id,
+        "nom": t["nom"],
+        "ville": t.get("ville", ""),
+        "type_transfo": t.get("type", ""),
+        "mode": mode,
+        "type_panne": panne_label or "Anomalie / panne",
+        "debut": now,
+        "fin": None,
+        "risque_max": float(risk),
+    }
+    st.session_state.event_log.append(event)
+    return len(st.session_state.event_log) - 1
+
+
+def _finish_event(active_index):
+    if active_index is not None and 0 <= active_index < len(st.session_state.event_log):
+        ev = st.session_state.event_log[active_index]
+        if ev["fin"] is None:
+            ev["fin"] = datetime.now()
+
+
+def log_event_if_needed(t_id, t, band_label, risk, panne_label):
+    """Historise les épisodes à risque élevé du mode manuel."""
     active = st.session_state.active_event[t_id]
 
     if band_label == "Élevé":
         if active is None:
-            st.session_state.event_log.append({
-                "transfo_id": t_id,
-                "nom": nom,
-                "type_panne": panne_label or "Mode manuel",
-                "debut": datetime.now(),
-                "fin": None,
-                "risque_max": risk,
-            })
-            st.session_state.active_event[t_id] = len(st.session_state.event_log) - 1
+            st.session_state.active_event[t_id] = _start_event(
+                t_id, t, panne_label or "Risque élevé", mode="manuel", risk=risk
+            )
         else:
             ev = st.session_state.event_log[active]
-            ev["risque_max"] = max(ev["risque_max"], risk)
-    else:
-        if active is not None:
-            st.session_state.event_log[active]["fin"] = datetime.now()
-            st.session_state.active_event[t_id] = None
+            ev["risque_max"] = max(ev["risque_max"], float(risk))
+            if panne_label and ev["type_panne"] in ("Risque élevé", "Mode manuel"):
+                ev["type_panne"] = panne_label
+    elif active is not None:
+        _finish_event(active)
+        st.session_state.active_event[t_id] = None
+
+
+def log_simulation_event(t_id, t, failure, risk=0.0):
+    """Historise immédiatement chaque scénario de panne sélectionné en simulation."""
+    active = st.session_state.simulation_event[t_id]
+    if failure:
+        if active is None:
+            st.session_state.simulation_event[t_id] = _start_event(
+                t_id, t, FAILURE_LABELS.get(failure, failure),
+                mode="simulation", risk=risk
+            )
+        else:
+            ev = st.session_state.event_log[active]
+            ev["risque_max"] = max(ev["risque_max"], float(risk))
+    elif active is not None:
+        _finish_event(active)
+        st.session_state.simulation_event[t_id] = None
 
 
 # ============================================================================
@@ -1570,24 +1695,27 @@ def render_command_header(active):
 
 
 def render_fleet_cards():
-    """Cartes compactes du parc pour une lecture instantanée."""
-    cols = st.columns(len(TRANSFORMERS))
-    for col, t in zip(cols, TRANSFORMERS):
-        status = st.session_state.last_status[t["id"]]
-        risk = float(status.get("risk", 0.0))
-        emoji = status.get("emoji", "🟢")
-        label = status.get("status", "Faible")
-        failure = status.get("failure") or "Aucune panne dominante"
-        with col:
-            html = f'''
-            <div class="fleet-card">
-              <div class="fleet-name">{emoji} {t["nom"]} <span style="font-size:11px;color:#6d8499;">· {t["quartier"]}</span></div>
-              <div class="fleet-risk">{risk:.0f}<span style="font-size:15px;"> %</span></div>
-              <div style="font-size:11px;font-weight:800;color:#46627c;">{label}</div>
-              <div class="fleet-line"><div class="fleet-fill" style="width:{max(0,min(100,risk))}%;"></div></div>
-              <div style="font-size:11px;color:#61798e;margin-top:8px;">IA : <b>{failure}</b></div>
-            </div>'''
-            st.markdown(html, unsafe_allow_html=True)
+    """Cartes compactes du parc, réparties sur 2 lignes pour 10 transformateurs."""
+    for start in range(0, len(TRANSFORMERS), 5):
+        batch = TRANSFORMERS[start:start + 5]
+        cols = st.columns(5)
+        for col, t in zip(cols, batch):
+            status = st.session_state.last_status[t["id"]]
+            risk = float(status.get("risk", 0.0))
+            emoji = status.get("emoji", "🟢")
+            label = status.get("status", "Faible")
+            failure = status.get("failure") or "Aucune panne dominante"
+            with col:
+                html = f'''
+                <div class="fleet-card">
+                  <div class="fleet-name">{emoji} {t["nom"]} <span style="font-size:10px;color:#6d8499;">· {t.get("ville","")}</span></div>
+                  <div style="font-size:10px;color:#71869a;">{t["type"]}</div>
+                  <div class="fleet-risk">{risk:.0f}<span style="font-size:15px;"> %</span></div>
+                  <div style="font-size:11px;font-weight:800;color:#46627c;">{label}</div>
+                  <div class="fleet-line"><div class="fleet-fill" style="width:{max(0,min(100,risk))}%;"></div></div>
+                  <div style="font-size:10px;color:#61798e;margin-top:8px;">IA : <b>{failure}</b></div>
+                </div>'''
+                st.markdown(html, unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -1612,6 +1740,7 @@ def render_dashboard():
         priority, priority_score = transformer_priority(t, status["risk"])
         rows.append({
             "Transformateur": t["nom"],
+            "Ville": t.get("ville", ""),
             "Quartier": t["quartier"],
             "Risque (%)": round(status["risk"], 1),
             "Statut": f"{status['emoji']} {status['status']}",
@@ -1794,8 +1923,9 @@ def render_manual_mode():
     base_charge = 0.80
     base_voltage = 1.00
     base_oil = float(np.clip(45 + 28 * base_charge, 35, 120))
-    base_hum = float(np.clip(SEASON_PRESETS[manual_season]["humidity"], 5, 100))
-    base_amb = 32.0
+    local_climate = local_climate_reference(t, manual_season)
+    base_hum = local_climate["humidity"]
+    base_amb = local_climate["ambient"]
 
     left, center, right = st.columns([1.12, 1.0, 1.25], gap="small")
     with left:
@@ -1832,6 +1962,9 @@ def render_manual_mode():
     slope, trend_cat = compute_trend(tid)
     band, emoji = risk_band(risk)
     update_last_status(tid, risk, slope, trend_cat, band, emoji, source="manuel", failure=None, progress=0.0, features=features)
+    rows_for_event = anticipated_failures(features, risk)
+    panne_for_event = rows_for_event[0][1] if rows_for_event and rows_for_event[0][2] >= 1.0 else "Risque élevé"
+    log_event_if_needed(tid, t, band, risk, panne_for_event)
     boundary_risk, boundary_alerts = measurement_boundary_risk(features)
 
     with center:
@@ -1885,6 +2018,7 @@ def render_manual_mode():
         "</div>", unsafe_allow_html=True
     )
     st.caption("Le déphasage indicatif est un indicateur dérivé de l'état de charge et du déséquilibre ; il n'est pas une mesure directe du facteur de puissance.")
+    render_transformer_visual(t, risk=risk, active=(band == "Élevé"), progress=0.0, mode="MANUEL")
 
     hist = list(st.session_state.history.get(tid, []))
     if len(hist) >= 2:
@@ -1915,29 +2049,47 @@ def render_simulation_mode():
     with c2:
         choice=st.selectbox("Scénario de panne",options,index=options.index(current) if current in options else 0,key=f"sim_choice_compact_{tid}")
     with c3:
-        sim_temp=st.slider("Température ambiante",15.0,50.0,float(st.session_state.simulation_temperature),.5,key="sim_temp_compact")
+        sim_ref = local_climate_reference(t, st.session_state.simulation_season)
+        sim_temp=st.slider("Température ambiante",15.0,50.0,float(np.clip(sim_ref["ambient"],15,50)),.5,key=f"sim_temp_compact_{tid}")
         st.session_state.simulation_temperature=sim_temp
     with c4:
         seasons=list(SEASON_PRESETS.keys())
-        sim_season=st.selectbox("Saison",seasons,index=seasons.index(st.session_state.simulation_season),key="sim_season_compact")
+        sim_season=st.selectbox("Saison",seasons,index=seasons.index(st.session_state.simulation_season),key=f"sim_season_compact_{tid}")
         st.session_state.simulation_season=sim_season
 
     previous=st.session_state.sim_failure.get(tid) or options[0]
     if choice!=previous:
+        # Fermer l'événement précédent avant de lancer le nouveau scénario.
+        if st.session_state.simulation_event.get(tid) is not None:
+            _finish_event(st.session_state.simulation_event[tid])
+            st.session_state.simulation_event[tid] = None
+
         if choice==options[0]:
-            st.session_state.sim_failure[tid]=None; st.session_state.sim_start_time[tid]=None
+            st.session_state.sim_failure[tid]=None
+            st.session_state.sim_start_time[tid]=None
         else:
-            st.session_state.sim_failure[tid]=choice; st.session_state.sim_start_time[tid]=time.time()
+            st.session_state.sim_failure[tid]=choice
+            st.session_state.sim_start_time[tid]=time.time()
+            # L'heure de début est enregistrée immédiatement, même si le risque
+            # n'a pas encore atteint un seuil élevé.
+            st.session_state.simulation_event[tid] = _start_event(
+                tid, t, FAILURE_LABELS.get(choice, choice), mode="simulation", risk=0.0
+            )
+
         st.session_state.simulation_history[tid].clear()
-        update_simulation_status(tid,0.0,0.0,"stable","Faible","🟢",source="simulation",failure=None if choice==options[0] else choice,progress=0.0,features={})
+        update_simulation_status(
+            tid,0.0,0.0,"stable","Faible","🟢",source="simulation",
+            failure=None if choice==options[0] else choice,progress=0.0,features={}
+        )
         st.rerun()
 
     active=st.session_state.sim_failure.get(tid)
     climate=TYPE_CLIMATE.get(t["type"],{"ambient_factor":1.0,"humidity_factor":1.0,"orage_voltage_bonus":0.0})
-    weather_name=st.selectbox("Météo",list(WEATHER_PRESETS.keys()),key="sim_weather_compact")
+    weather_name=st.selectbox("Météo",list(WEATHER_PRESETS.keys()),key=f"sim_weather_compact_{tid}")
     weather=WEATHER_PRESETS[weather_name]
     oil_add=max(0.0,sim_temp-30)*0.6*climate["ambient_factor"]
-    hum=float(np.clip(SEASON_PRESETS[sim_season]["humidity"]+weather["humidity_bonus"]*climate["humidity_factor"],5,100))
+    local_sim = local_climate_reference(t, sim_season)
+    hum=float(np.clip(local_sim["humidity"]+weather["humidity_bonus"]*climate["humidity_factor"],5,100))
     vadd=climate["orage_voltage_bonus"] if weather["orage"] else 0.0
     base={"charge":0.8,"oil_temp":45+0.8*28+oil_add,"voltage":1.0+vadd}
 
@@ -1964,12 +2116,15 @@ def render_simulation_mode():
     ref={"charge":base["charge"],"oil_temp":base["oil_temp"],"ambient":sim_temp,"humidity":hum,"voltage":base["voltage"],"season_label":sim_season}
     if SIM_RELATIVE_RISK: climate_bonus-=predict_risk(ref,t["type"])*(1-progress)
     risk=float(np.clip(risk+climate_bonus,0,100)) if active else 0.0
+    log_simulation_event(tid, t, active, risk)
 
     push_simulation_history(tid,risk,features)
     slope,trend=compute_simulation_trend(tid)
     band,emoji=risk_band(risk)
     update_simulation_status(tid,risk,slope,trend,band,emoji,source="simulation",failure=active,progress=progress,features=features)
     st.session_state.simulation_status[tid]["reference"]=ref
+
+    render_transformer_visual(t, risk=risk, active=bool(active), progress=progress, mode="SIMULATION")
 
     left,center,right=st.columns([1.05,1.0,1.3],gap="small")
     with left:
@@ -2036,6 +2191,7 @@ def render_transformer_status():
             "N°": t["id"],
             "Nom": t["nom"],
             "Type": t["type"],
+            "Ville": t.get("ville", ""),
             "Quartier": t["quartier"],
             "Risque (%)": round(status["risk"], 1),
             "Statut": f"{status['emoji']} {status['status']}",
@@ -2055,28 +2211,148 @@ def render_transformer_status():
 # SECTION 4 — HISTORIQUE DES PANNES
 # ============================================================================
 
+def build_measurement_history_df():
+    """Construit l'historique détaillé des mesures pour export et graphiques."""
+    rows = []
+
+    for t in TRANSFORMERS:
+        tid = t["id"]
+        for point in list(st.session_state.history.get(tid, [])):
+            rows.append({
+                "Date_heure": point["t"],
+                "Transformateur": t["nom"],
+                "Ville": t.get("ville", ""),
+                "Type": t.get("type", ""),
+                "Mode": "manuel",
+                "Panne": "",
+                "Risque_pct": round(float(point.get("risk", 0)), 2),
+                "Charge_relative": point.get("charge"),
+                "Temperature_huile_C": point.get("oil_temp"),
+                "Temperature_ambiante_C": point.get("ambient"),
+                "Humidite_pct": point.get("humidity"),
+                "Tension_pu": point.get("voltage"),
+            })
+
+        for point in list(st.session_state.simulation_history.get(tid, [])):
+            failure = st.session_state.simulation_status.get(tid, {}).get("failure") or ""
+            rows.append({
+                "Date_heure": point["t"],
+                "Transformateur": t["nom"],
+                "Ville": t.get("ville", ""),
+                "Type": t.get("type", ""),
+                "Mode": "simulation",
+                "Panne": FAILURE_LABELS.get(failure, failure),
+                "Risque_pct": round(float(point.get("risk", 0)), 2),
+                "Charge_relative": point.get("charge"),
+                "Temperature_huile_C": point.get("oil_temp"),
+                "Temperature_ambiante_C": point.get("ambient"),
+                "Humidite_pct": point.get("humidity"),
+                "Tension_pu": point.get("voltage"),
+            })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("Date_heure").reset_index(drop=True)
+
+
 def render_failure_history():
-    """Rendu exclusif de la section 📈 Historique des pannes."""
-    st.subheader("Historique des épisodes à risque élevé")
+    """Historique horodaté des pannes + courbes + histogrammes + exports."""
+    st.subheader("📈 Historique horodaté des pannes")
 
     if not st.session_state.event_log:
-        st.info("Aucun épisode à risque élevé enregistré pour l'instant.")
-        return
+        st.info("Aucun épisode de panne enregistré pour l'instant. Lancez une panne en simulation ou dépassez le niveau « Élevé » en mode manuel.")
+    else:
+        rows = []
+        for ev in reversed(st.session_state.event_log):
+            fin = ev["fin"]
+            duree = ((fin or datetime.now()) - ev["debut"]).total_seconds() / 60
+            rows.append({
+                "Date": ev["debut"].strftime("%d/%m/%Y"),
+                "Heure début": ev["debut"].strftime("%H:%M:%S"),
+                "Heure fin": fin.strftime("%H:%M:%S") if fin else "en cours",
+                "Transformateur": ev["nom"],
+                "Ville": ev.get("ville", ""),
+                "Type": ev.get("type_transfo", ""),
+                "Mode": ev.get("mode", ""),
+                "Panne": ev["type_panne"],
+                "Durée (min)": round(duree, 1),
+                "Risque max (%)": round(ev["risque_max"], 1),
+            })
 
-    rows = []
-    for ev in reversed(st.session_state.event_log):
-        fin = ev["fin"]
-        duree = ((fin or datetime.now()) - ev["debut"]).total_seconds() / 60
-        rows.append({
-            "Transformateur": ev["nom"],
-            "Cause": ev["type_panne"],
-            "Début": ev["debut"].strftime("%H:%M:%S"),
-            "Fin": fin.strftime("%H:%M:%S") if fin else "en cours",
-            "Durée (min)": round(duree, 1),
-            "Risque max (%)": round(ev["risque_max"], 1),
-        })
+        df_events = pd.DataFrame(rows)
+        st.dataframe(df_events, use_container_width=True, hide_index=True)
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        # Courbe des pics de risque par événement.
+        chart_rows = []
+        for ev in st.session_state.event_log:
+            chart_rows.append({
+                "Date_heure": ev["debut"],
+                "Transformateur": ev["nom"],
+                "Panne": ev["type_panne"],
+                "Risque max (%)": ev["risque_max"],
+            })
+        df_chart = pd.DataFrame(chart_rows).sort_values("Date_heure")
+        if not df_chart.empty:
+            st.markdown("### 📉 Évolution des risques enregistrés")
+            fig_line = px.line(
+                df_chart, x="Date_heure", y="Risque max (%)",
+                color="Transformateur", markers=True,
+                hover_data=["Panne"]
+            )
+            fig_line.update_yaxes(range=[0, 100])
+            fig_line.add_hline(y=50, line_dash="dash")
+            fig_line.add_hline(y=65, line_dash="dash")
+            st.plotly_chart(fig_line, use_container_width=True, key="failure_event_line_chart")
+
+            st.markdown("### 📊 Nombre de pannes par type")
+            fig_bar = px.histogram(
+                df_events, x="Panne", color="Mode",
+                barmode="group", text_auto=True
+            )
+            fig_bar.update_layout(xaxis_title="Type de panne", yaxis_title="Nombre d'événements")
+            st.plotly_chart(fig_bar, use_container_width=True, key="failure_type_histogram")
+
+        csv_events = df_events.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Télécharger l'historique des pannes (CSV)",
+            data=csv_events,
+            file_name=f"historique_pannes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_failure_events_csv",
+        )
+
+        if not df_chart.empty:
+            html_report = (
+                "<html><head><meta charset='utf-8'><title>Historique des pannes</title></head><body>"
+                "<h1>Historique des pannes — IA Réseau Pro</h1>"
+                + fig_line.to_html(full_html=False, include_plotlyjs="cdn")
+                + fig_bar.to_html(full_html=False, include_plotlyjs=False)
+                + "</body></html>"
+            )
+            st.download_button(
+                "⬇️ Télécharger les courbes + histogramme (HTML)",
+                data=html_report,
+                file_name=f"graphiques_pannes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True,
+                key="download_failure_charts_html",
+            )
+
+    st.markdown("### 🧾 Historique détaillé des mesures")
+    df_measure = build_measurement_history_df()
+    if df_measure.empty:
+        st.caption("Les mesures apparaîtront ici au fur et à mesure du fonctionnement.")
+    else:
+        st.dataframe(df_measure.tail(100), use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Télécharger toutes les mesures pour Excel",
+            data=df_measure.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"historique_mesures_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_measurement_history_csv",
+        )
 
 
 # ============================================================================
@@ -2152,6 +2428,7 @@ def render_map():
             "N°": t["id"],
             "Nom": t["nom"],
             "Type": t["type"],
+            "Ville": t.get("ville", ""),
             "Quartier": t["quartier"],
             "Risque (%)": round(risk, 1),
             "Statut": f"{status['emoji']} {status['status']}",
@@ -2160,7 +2437,7 @@ def render_map():
             "lon": t["lon"],
             "risk": risk,
             # Colonnes dédiées à l'infobulle (noms simples, sans espaces)
-            "tip_nom": f"{t['nom']} ({t['type']}) — {t['quartier']}",
+            "tip_nom": f"{t['nom']} ({t['type']}) — {t.get('ville', '')} — {t['quartier']}",
             "tip_risque": f"Risque : {risk:.1f} % — {status['emoji']} {status['status']}",
             "tip_priorite": f"Priorité : {priority} ({priority_score:.1f}/100)",
             "tip_etat": etat,
@@ -2169,7 +2446,7 @@ def render_map():
     df_parc = pd.DataFrame(rows)
 
     st.dataframe(
-        df_parc[["N°", "Nom", "Type", "Quartier", "Risque (%)", "Statut", "État"]],
+        df_parc[["N°", "Nom", "Type", "Ville", "Quartier", "Risque (%)", "Statut", "État"]],
         use_container_width=True,
         hide_index=True,
     )
