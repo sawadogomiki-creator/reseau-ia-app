@@ -2581,3 +2581,214 @@ st.caption(
     "la connexion est disponible. Les priorités, seuils et extrapolations "
     "doivent être validés avant toute utilisation opérationnelle."
 )
+# ============================================================================
+# PATCH — HISTORIQUE GRAPHIQUE DU RISQUE (courbe + seuils 50 % / 65 %)
+# ============================================================================
+# À intégrer dans app_ia_reseau_pro.py en 5 étapes (repères entre guillemets) :
+#
+#   ÉTAPE 1 — coller le BLOC 1 juste après la ligne  HISTORY_LEN = 120
+#   ÉTAPE 2 — dans init_state(), ajouter les 2 lignes du BLOC 2 dans le dictionnaire `defaults`
+#   ÉTAPE 3 — coller le BLOC 3 juste AVANT la ligne  def render_failure_history():
+#   ÉTAPE 4 — ajouter les 2 lignes d'enregistrement du BLOC 4 (mode manuel et simulation)
+#   ÉTAPE 5 — dans render_failure_history(), ajouter l'appel du BLOC 5 juste sous le st.subheader
+#
+# Pourquoi un nouveau journal ? Les deques `history` et `simulation_history` ne gardent que
+# HISTORY_LEN = 120 points (≈ 2 minutes à 1 point par seconde) : trop court pour un historique.
+# Le journal ci-dessous garde jusqu'à 20 000 relevés (un toutes les 2 s par poste et par mode).
+
+
+# ----------------------------------------------------------------------------
+# BLOC 1 — constantes (après HISTORY_LEN = 120)
+# ----------------------------------------------------------------------------
+RISK_LOG_LEN = 20000          # nombre maximal de relevés conservés
+RISK_LOG_MIN_INTERVAL = 2.0   # secondes minimales entre deux relevés (même poste, même mode)
+RISK_CHART_MAX_POINTS = 1500  # points maximum tracés par courbe (allège l'affichage)
+
+
+# ----------------------------------------------------------------------------
+# BLOC 2 — dans init_state(), à l'intérieur du dictionnaire `defaults = { ... }`
+# ----------------------------------------------------------------------------
+#     "risk_log": lambda: deque(maxlen=RISK_LOG_LEN),
+#     "risk_log_last": dict,
+
+
+# ----------------------------------------------------------------------------
+# BLOC 3 — fonctions (avant def render_failure_history)
+# ----------------------------------------------------------------------------
+
+def record_risk_point(t, mode, risk, features, failure=None):
+    """Ajoute un relevé au journal long (au plus un toutes les RISK_LOG_MIN_INTERVAL secondes)."""
+    now = datetime.now()
+    key = (t["id"], mode)
+    last = st.session_state.risk_log_last.get(key)
+    if last is not None and (now - last).total_seconds() < RISK_LOG_MIN_INTERVAL:
+        return
+    st.session_state.risk_log_last[key] = now
+    st.session_state.risk_log.append({
+        "Date_heure": now,
+        "Transformateur": t["nom"],
+        "Ville": t.get("ville", ""),
+        "Type": t.get("type", ""),
+        "Mode": mode,
+        "Panne": FAILURE_LABELS.get(failure, failure) if failure else "",
+        "Risque_pct": round(float(risk), 2),
+        "Charge_relative": round(float(features.get("charge", 0)), 3),
+        "Temperature_huile_C": round(float(features.get("oil_temp", 0)), 1),
+        "Temperature_ambiante_C": round(float(features.get("ambient", 0)), 1),
+        "Humidite_pct": round(float(features.get("humidity", 0)), 1),
+        "Tension_pu": round(float(features.get("voltage", 0)), 3),
+    })
+
+
+def risk_log_dataframe():
+    if not st.session_state.get("risk_log"):
+        return pd.DataFrame()
+    df = pd.DataFrame(list(st.session_state.risk_log))
+    df["Date_heure"] = pd.to_datetime(df["Date_heure"])
+    return df
+
+
+def build_risk_history_figure(d, window_start=None, show_events=True):
+    """Courbe historique du risque : zones colorées, seuils 50 % et 65 %, épisodes de panne."""
+    parts = []
+    for _, g in d.groupby(["Transformateur", "Mode"]):
+        step = max(1, len(g) // RISK_CHART_MAX_POINTS)
+        parts.append(g.iloc[::step])
+    dp = pd.concat(parts).sort_values("Date_heure")
+
+    fig = px.line(
+        dp, x="Date_heure", y="Risque_pct",
+        color="Transformateur", line_dash="Mode",
+        markers=len(dp) < 80,
+        hover_data=["Ville", "Panne"],
+        labels={"Date_heure": "Date et heure", "Risque_pct": "Risque (%)"},
+    )
+
+    # Zones de niveau (mêmes bornes que RISK_BANDS)
+    for lo, hi, color in (
+        (0, 35, "rgba(25,184,117,.07)"),
+        (35, 50, "rgba(246,200,40,.10)"),
+        (50, 65, "rgba(246,166,35,.12)"),
+        (65, 100, "rgba(239,70,86,.12)"),
+    ):
+        fig.add_hrect(y0=lo, y1=hi, fillcolor=color, line_width=0, layer="below")
+
+    # Seuils
+    fig.add_hline(y=50, line_dash="dash", line_color="orange",
+                  annotation_text="Seuil 50 %", annotation_position="top left")
+    fig.add_hline(y=65, line_dash="dash", line_color="red",
+                  annotation_text="Seuil 65 %", annotation_position="top left")
+
+    # Épisodes de panne enregistrés (bandes verticales rouges)
+    if show_events:
+        try:
+            names = set(d["Transformateur"].unique())
+            modes = set(d["Mode"].unique())
+            now = datetime.now()
+            for ev in st.session_state.event_log:
+                if ev["nom"] not in names or ev.get("mode", "manuel") not in modes:
+                    continue
+                x0, x1 = ev["debut"], (ev["fin"] or now)
+                if window_start is not None and x1 < window_start:
+                    continue
+                fig.add_vrect(x0=x0, x1=x1, fillcolor="rgba(239,70,86,.10)",
+                              line_width=0, layer="below")
+        except Exception:
+            pass
+
+    fig.update_yaxes(range=[0, 100])
+    fig.update_layout(
+        height=470, margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        uirevision="risk_history",  # conserve le zoom malgré le rafraîchissement chaque seconde
+    )
+    return fig
+
+
+def render_risk_history_chart():
+    """Courbe historique du risque avec filtres, statistiques et exports."""
+    st.markdown("### 📈 Courbe historique du risque")
+    df = risk_log_dataframe()
+    if df.empty:
+        st.info(
+            "La courbe se construit pendant le fonctionnement : ouvrez le **Mode manuel** ou la "
+            "**Simulation de pannes** et laissez tourner l'application (un relevé toutes les 2 s)."
+        )
+        return
+
+    c1, c2, c3 = st.columns([1.1, 1.8, 1.0])
+    modes = c1.multiselect("Mode", ["manuel", "simulation"],
+                           default=["manuel", "simulation"], key="hist_modes")
+    available = sorted(df["Transformateur"].unique())
+    chosen = c2.multiselect("Transformateurs", available, default=available, key="hist_transfos")
+    window = c3.selectbox("Période", ["5 min", "15 min", "1 h", "Tout"], index=1, key="hist_window")
+    show_events = st.checkbox("Afficher les épisodes de panne (bandes rouges)", value=True, key="hist_events")
+
+    minutes = {"5 min": 5, "15 min": 15, "1 h": 60, "Tout": None}[window]
+    window_start = datetime.now() - timedelta(minutes=minutes) if minutes else None
+
+    d = df[df["Mode"].isin(modes) & df["Transformateur"].isin(chosen)]
+    if window_start is not None:
+        d = d[d["Date_heure"] >= window_start]
+    if d.empty:
+        st.info("Aucun relevé pour ces filtres : élargissez la période ou changez de transformateur.")
+        return
+
+    fig = build_risk_history_figure(d, window_start, show_events)
+    st.plotly_chart(fig, use_container_width=True, key="risk_history_chart")
+    st.caption(
+        "Zones : vert < 35 %, jaune 35–50 %, orange 50–65 %, rouge ≥ 65 %. Traits pleins : mode manuel ; "
+        "traits pointillés : simulation. Pour enregistrer l'image (figure du mémoire), utilisez l'icône "
+        "appareil photo en haut à droite du graphique."
+    )
+
+    # Statistiques par poste et par mode (part des relevés ≈ part du temps, car l'échantillonnage est régulier)
+    rows = []
+    for (name, mode), g in d.groupby(["Transformateur", "Mode"]):
+        rows.append({
+            "Transformateur": name, "Mode": mode, "Relevés": len(g),
+            "Début": g["Date_heure"].min().strftime("%H:%M:%S"),
+            "Fin": g["Date_heure"].max().strftime("%H:%M:%S"),
+            "Risque moyen (%)": round(g["Risque_pct"].mean(), 1),
+            "Risque max (%)": round(g["Risque_pct"].max(), 1),
+            "Temps ≥ 50 % (%)": round((g["Risque_pct"] >= 50).mean() * 100, 1),
+            "Temps ≥ 65 % (%)": round((g["Risque_pct"] >= 65).mean() * 100, 1),
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    b1, b2, b3 = st.columns(3)
+    b1.download_button(
+        "⬇️ Courbe interactive (HTML)",
+        data=fig.to_html(full_html=True, include_plotlyjs="cdn"),
+        file_name=f"courbe_risque_{stamp}.html", mime="text/html",
+        use_container_width=True, key="dl_risk_html",
+    )
+    b2.download_button(
+        "⬇️ Relevés filtrés (CSV)",
+        data=d.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"releves_risque_{stamp}.csv", mime="text/csv",
+        use_container_width=True, key="dl_risk_csv",
+    )
+    if b3.button("🗑️ Effacer l'historique graphique", use_container_width=True, key="clear_risk_log"):
+        st.session_state.risk_log.clear()
+        st.session_state.risk_log_last.clear()
+        st.rerun()
+
+
+# ----------------------------------------------------------------------------
+# BLOC 4 — deux lignes d'enregistrement
+# ----------------------------------------------------------------------------
+# Dans render_manual_mode(), juste après  push_history(tid, risk, features) :
+#
+#     record_risk_point(t, "manuel", risk, features)
+#
+# Dans render_simulation_mode(), juste après  push_simulation_history(tid,risk,features) :
+#
+#     record_risk_point(t, "simulation", risk, features, active)
+
+
+# ----------------------------------------------------------------------------
+# BLOC 5 — dans render_failure_history(), juste sous  st.subheader("📈 Historique horodaté des pannes")
+# ----------------------------------------------------------------------------
+#     render_risk_history_chart()
